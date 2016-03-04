@@ -346,6 +346,7 @@ class ProcScen:
         self.setseason()
 
         cmds={0x02:self.NOP,
+              0x03:self.Case,
               0x05:self.Surface,
               0x06:self.SPnt,
               0x07:self.CPnt,
@@ -564,6 +565,25 @@ class ProcScen:
         else:
             self.name="%s@%X" % (asciify(splitext(basename(self.srcfile))[0]), self.bgl.tell()-2)
         self.firstarea=False
+
+    def Case(self):
+        (num_cases, var, off_default) = unpack('<3h', self.bgl.read(6))
+        off_default -= 10
+
+        offset = {}
+        for i in range(0, num_cases):
+            (off,) = unpack('<h', self.bgl.read(2))
+            off -= 12 + i * 2
+            offset[i] = off
+
+        val = self.getvar(var)
+        if __debug__:
+            if self.debug:
+                self.debug.write("%x: case %d in {%s} or %d\n"
+                                 % (var, val, ', '.join(offset), off_default))
+        if val in offset:
+            self.bgl.seek(offset[val], 1)
+        self.bgl.seek(off_default, 1)
 
     def Surface(self):		# 05
         self.surface=True	# StrRes/CntRes does surface not lines
