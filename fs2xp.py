@@ -2,7 +2,7 @@
 
 #
 # Copyright (c) 2006,2007 Jonathan Harris
-# 
+#
 # Mail: <x-plane@marginal.org.uk>
 # Web:  http://marginal.org.uk/x-planescenery/
 #
@@ -31,132 +31,147 @@
 #   http://creativecommons.org/licenses/by-nc-sa/3.0/
 #
 
-from getopt import getopt, GetoptError
-from os import chdir, listdir, mkdir
-from os.path import abspath, normpath, basename, dirname, pardir, exists, isdir, join
-import sys	# for path
-from sys import exit, argv, platform, version
+import argparse
+
+from os import chdir, mkdir
+from os.path import (abspath, normpath, basename, dirname, pardir, exists,
+                     isdir, join)
+from sys import exit, argv
 from traceback import print_exc
 
 from convmain import Output
 from convutil import FS2XError, viewer
 
+
 # callbacks
 def status(percent, msg):
-    if percent<0: print
-    print msg.encode("latin1",'replace')
+    if percent < 0:
+        print
+    print msg.encode('latin1', 'replace')
 
-def log(msg):
-    if not isdir(dirname(logname)):
-        mkdir(dirname(logname))
-    logfile=file(logname, 'at')
-    logfile.write('%s\n' % msg.encode("latin1",'replace'))
-    logfile.close()
 
 def refresh():
     pass
 
-def usage():
-    exit('\nUsage:\tfs2xp [options] "MSFS scenery location" "X-Plane scenery location"\noptions:\t-l "Additional MSFS library location"\n\t\t-s Spring|Summer|Autumn|Winter\n\t\t-x\n\t\t-8\n\t\t-9\n')
+
+class Log(object):
+    def __init__(self, path):
+        if not isdir(dirname(path)):
+            mkdir(dirname(path))
+        self.logpath = path
+        self.logfile = file(path, 'at')
+
+    @property
+    def file(self):
+        return self.logfile
+
+    def close(self):
+        self.logfile.close()
+
+    def view(self):
+        status(-1, 'Displaying log "%s"' % self.logpath)
+        viewer(self.logpath)
+
+    def write(self, msg):
+        self.logfile.write('%s\n' % msg.encode('latin1', 'replace'))
 
 
-# Path validation
-mypath=dirname(abspath(argv[0]))
-if not isdir(mypath):
-    exit('"%s" is not a folder' % mypath)
-if basename(mypath)=='MacOS':
-    chdir(normpath(join(mypath,pardir)))	# Starts in MacOS folder
-else:
-    chdir(mypath)
+def parse_args():
+    class store_season(argparse.Action):
+        Choices = ['spring', 'summer', 'autumn', 'winter']
+
+        def __call__(self, parser, namespace, season, option_string=None):
+            season_idx = self.Choices.index(season)
+            setattr(namespace, self.dest, season_idx)
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('msfs_scenery_path',
+                        help='Path to MS Flight Simulator scenery.')
+    parser.add_argument('xplane_scenery_path',
+                        help='Path to generated X-Plane scenery.')
+    parser.add_argument('-s', '--season', default=0,
+                        choices=store_season.Choices, action=store_season,
+                        help='Season to convert to X-Plane.')
+    parser.add_argument('-v', '--xplane-version', type=int, default=10,
+                        choices=[8, 9, 10],
+                        help='Minimum X-Plane version to support.')
+    extract_group = parser.add_mutually_exclusive_group()
+    extract_group.add_argument('-x', '--extract-only', action='store_true',
+                               help=('Extract all data found instead of '
+                                     'converting it to X-Plane format.'))
+    extract_group.add_argument('-l', '--library-path',
+                               help=('Path to additional MS Flight Simulator '
+                                     'library.'))
+    debug_group = parser.add_mutually_exclusive_group()
+    debug_group.add_argument('-p', '--profile', action='store_true',
+                             help=('Enable profiler (for FS2XPlane '
+                                   'developers).'))
+    debug_group.add_argument('-d', '--debug', action='store_true',
+                             help='Enable debugging.')
+    return parser.parse_args()
 
 
-# Arg validation
-lbpath=None
-season=0
-debug=False
-xpver=10
-dumplib=False
-prof=False
-try:
-    (opts, args) = getopt(argv[1:], 'l:s:d9px?h')
-except GetoptError, e:
-    print '\nError:\t'+e.msg
-    usage()
-for (opt, arg) in opts:
-    if opt in ['-?' or '-h']:
-        usage()
-    elif opt=='-l':
-        lbpath=abspath(unicode(arg))
-    elif opt=='-d':
-        debug=True
-    elif opt=='-8':
-        xpver=8
-    elif opt=='-9':
-        xpver=9
-    elif opt=='-p':
-        prof=True
-    elif opt=='-x':
-        dumplib=True
-    elif opt=='-s':
-        seasons=['spring','summer','autumn','winter']
-        if arg.lower() not in seasons:
-            print '\nError:\tSeason %s not recognized' % arg
-            usage()
-        season=seasons.index(arg.lower())
-if len(args)!=2:
-    usage()
-if dumplib:
-    if lbpath:
-        exit("\nError:\tSpecify only one of -l and -x\n")
+def main():
+    args = parse_args()
+    logfile = abspath(join(args.xplane_scenery_path, 'summary.txt'))
+    log = Log(logfile)
+    try:
+        output = Output(args.msfs_scenery_path, args.library_path,
+                        args.xplane_scenery_path, args.extract_only,
+                        args.season, args.xplane_version, status, log.write,
+                        refresh, args.debug)
+        output.scanlibs()
+        if False:
+            # Just list library uid/names.
+            for (uid, (mdlformat, bglname, bglname, off, rcsize, name,
+                       scale)) in output.libobj.iteritems():
+                bgl = bglname[len(args.library_path):]
+                output.debug.write("%s\t%s\t%s\n" % (uid, name, bgl))
+            raise IOError
+        if args.profile:
+            from profile import run
+            run('output.process()', join(args.xplane_scenery_path,
+                                         'profile.dmp'))
+        else:
+            output.process()
+        output.proclibs()
+        output.procphotos()
+        output.export()
+        if output.debug:
+            output.debug.close()
+        elif exists(log.path):
+            log.view()
+        status(-1, 'Done.')
+
+    except FS2XError, e:
+        if __debug__:
+            print_exc()
+        exit('Error:\t%s\n' % e.msg)
+
+    except:
+        status(-1, 'Internal error')
+        print_exc()
+        if not args.debug:
+            log.write('\nInternal error\n')
+            print_exc(None, log.file)
+            log.view()
+        else:
+            print
+        exit(1)
+
+    finally:
+        log.close()
+
+
+if __name__ == '__main__':
+    # Path validation.
+    mypath = dirname(abspath(argv[0]))
+    if not isdir(mypath):
+        exit('"%s" is not a folder' % mypath)
+    if basename(mypath) == 'MacOS':
+        # Starts in MacOS folder.
+        chdir(normpath(join(mypath, pardir)))
     else:
-        fspath=None
-        lbpath=abspath(unicode(args[0]))
-else:
-    fspath=abspath(unicode(args[0]))
-xppath=abspath(unicode(args[1]))
-logname=abspath(join(xppath, 'summary.txt'))
-        
+        chdir(mypath)
 
-# Main
-try:
-    output=Output(fspath, lbpath, xppath, dumplib, season, xpver,
-                  status, log, refresh, debug and not prof)
-    output.scanlibs()
-    if False:	# just list library uid/names
-        for (uid,(mdlformat, bglname, bglname, off, rcsize, name, scale)) in output.libobj.iteritems():
-            output.debug.write("%s\t%s\t%s\n" % (uid, name, bglname[len(lbpath):]))
-        raise IOError
-    if prof:
-        from profile import run
-        run('output.process()', join(xppath,'profile.dmp'))
-    else:
-        output.process()
-    output.proclibs()
-    output.procphotos()
-    output.export()
-    if output.debug:
-        output.debug.close()
-    elif exists(logname):
-        status(-1, 'Displaying summary "%s"' % logname)
-        viewer(logname)
-    status(-1, 'Done.')
-
-except FS2XError, e:
-    if __debug__: print_exc()
-    exit('Error:\t%s\n' % e.msg)
-
-except:
-    status(-1, 'Internal error')
-    print_exc()
-    if not debug:
-        if not isdir(dirname(logname)):
-            mkdir(dirname(logname))
-        logfile=file(logname, 'at')
-        logfile.write('\nInternal error\n')
-        print_exc(None, logfile)
-        logfile.close()
-        status(-1, 'Displaying error log "%s"' % logname)
-        viewer(logname)
-    else:
-        print
-    exit(1)
+    main()
