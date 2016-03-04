@@ -33,6 +33,7 @@ class Output:
 
         # X-Plane features
         self.xpver=xpver
+        self.docomplexity=(xpver>=9)
         self.dds=(xpver>=9)
         self.draped=(xpver>=10)
         self.doatc=(xpver>=10)
