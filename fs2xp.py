@@ -93,19 +93,19 @@ def parse_args():
 def main():
     args = parse_args()
     logfile = abspath(join(args.xplane_scenery_path, 'summary.txt'))
-    log = Log(logfile)
+    log = Log(logfile, args.debug)
     try:
         output = Output(args.msfs_scenery_path, args.library_path,
                         args.xplane_scenery_path, args.extract_only,
-                        args.season, args.xplane_version, status, log.write,
-                        refresh, args.debug)
+                        args.season, args.xplane_version, status, log,
+                        refresh)
         output.scanlibs()
         if False:
             # Just list library uid/names.
             for (uid, (mdlformat, bglname, bglname, off, rcsize, name,
                        scale)) in output.libobj.iteritems():
                 bgl = bglname[len(args.library_path):]
-                output.debug.write("%s\t%s\t%s\n" % (uid, name, bgl))
+                log.debug("%s\t%s\t%s\n" % (uid, name, bgl))
             raise IOError
         if args.profile:
             from profile import run
@@ -116,9 +116,7 @@ def main():
         output.proclibs()
         output.procphotos()
         output.export()
-        if output.debug:
-            output.debug.close()
-        elif exists(log.path):
+        if exists(log.path) and not log.debug_enabled:
             status(-1, 'Displaying log "%s"' % log.path)
             log.view()
         status(-1, 'Done.')
@@ -132,7 +130,7 @@ def main():
         status(-1, 'Internal error')
         print_exc()
         if not args.debug:
-            log.write('\nInternal error\n')
+            log.info('\nInternal error\n')
             print_exc(None, log.file)
             status(-1, 'Displaying error log "%s"' % log.path)
             log.view()

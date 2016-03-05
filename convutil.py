@@ -742,7 +742,7 @@ def maketex(src, dstdir, output, palno, substituteblank=False):
                 output.donetex[src]=tex
                 return tex
         if src not in output.donetex:
-            output.log("Texture %s not found" % basename(src))
+            output.log.info("Texture %s not found" % basename(src))
         if substituteblank:
             # Missing texture in polygon causes crash
             if output.dds:
@@ -763,8 +763,8 @@ def maketex(src, dstdir, output, palno, substituteblank=False):
         if exists(dst):
             output.donetex[src]=dds
             return dds
-        elif output.debug:
-            output.debug.write("DDS:\t%s:\t%s\n" % (src, x))
+        else:
+            output.log.debug("DDS:\t%s:\t%s\n" % (src, x))
 
     tex+='.png'
     dst=join(dstdir,tex)
@@ -791,12 +791,13 @@ def maketex(src, dstdir, output, palno, substituteblank=False):
             x=helper(output.pngexe, '-xbrq', '-o', dst, newsrc)
         if newsrc!=src: unlink(newsrc)
         if not exists(dst):
-            output.log("Can't convert texture %s\n%s" % (basename(src),x))
-        elif output.debug:
-            output.debug.write("PNG:\t%s:\t%s\n" % (src, x))
+            output.log.info("Can't convert texture %s\n%s"
+                            % (basename(src), x))
+        else:
+            output.log.debug("PNG:\t%s:\t%s\n" % (src, x))
 
     except IOError:
-        output.log("Can't convert texture %s" % basename(src))
+        output.log.info("Can't convert texture %s" % basename(src))
 
     output.donetex[src]=tex
     return tex

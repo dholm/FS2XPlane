@@ -20,7 +20,7 @@ blueskyre=re.compile(r"S(\d)\$([+-]*\d+)-([+-]*\d+)_(\d)_(\d)\.(bmp|BMP|dds|DDS)
 
 def ProcPhoto(texdir, output):
 
-    if output.debug: output.debug.write("%s\n" % texdir.encode("latin1", 'replace'))
+    output.log.debug("%s\n" % texdir)
 
     # All textures
     texs=[i for i in listdir(texdir) if texre.search(i)]
@@ -102,17 +102,17 @@ def ishigher(name, layer, lat,lon, blueskydict, output):
             break
 
         if hires:
-            if output.debug: output.debug.write("Photo: %s higher res is %s\n" % (name, resstr))
+            output.log.debug("Photo: %s higher res is %s\n" % (name, resstr))
             return True
     return False
                 
 
 def makephoto(name, tex, lat, lon, scale, layer, pixels, output):
     # lat and lon are the NW corner cos that's how MSFS does it
-    if output.debug: output.debug.write("Photo: %s %.6f,%.6f,%s " % (name, lat, lon, scale))
+    output.log.debug("Photo: %s %.6f,%.6f,%s " % (name, lat, lon, scale))
     if lon+LONRES*scale > floor(lon)+1:
         # Split EW
-        if output.debug: output.debug.write("EW ")
+        output.log.debug("EW ")
         points=[[(Point(lat-LATRES*scale,lon),0,0),
                  (Point(lat-LATRES*scale,floor(lon)+1),(floor(lon)+1-lon)/(LONRES*scale),0),
                  (Point(lat,floor(lon)+1),(floor(lon)+1-lon)/(LONRES*scale),1),
@@ -122,14 +122,14 @@ def makephoto(name, tex, lat, lon, scale, layer, pixels, output):
                  (Point(lat,lon+LONRES*scale),1,1),
                  (Point(lat,floor(lon)+1),(floor(lon)+1-lon)/(LONRES*scale),1)]]
     else:
-        if output.debug: output.debug.write("OK ")
+        output.log.debug("OK ")
         points=[[(Point(lat-LATRES*scale,lon),0,0),	# SW
                  (Point(lat-LATRES*scale,lon+LONRES*scale),1,0),
                  (Point(lat,lon+LONRES*scale),1,1),	# NE
                  (Point(lat,lon),0,1)]]
 
     if lat>floor(lat-LATRES*scale)+1:
-        if output.debug: output.debug.write("NS\n")
+        output.log.debug("NS\n")
         # Split NS
         for i in range(len(points)):
             points.append([(Point(floor(lat-LATRES*scale)+1,points[i][3][0].lon),points[i][3][1],(floor(lat-LATRES*scale)+1-lat+LATRES*scale)/(LATRES*scale)),
@@ -137,7 +137,8 @@ def makephoto(name, tex, lat, lon, scale, layer, pixels, output):
                            points[i][2], points[i][3]])
             points[i][2]=points[-1][1]
             points[i][3]=points[-1][0]
-    elif output.debug: output.debug.write("OK\n")
+    else:
+        output.log.debug("OK\n")
 
     poly=Polygon(name, tex, True, int(LATRES*1852*60*scale), layer, (lat-LATRES*scale*0.5, lon+LONRES*scale*0.5, pixels))
     output.polydat[name]=poly

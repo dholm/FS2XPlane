@@ -13,6 +13,7 @@ class ProcScen:
         self.old=False	# Old style scenery found and skipped
         self.rrt=False	# Old style runways/roads found and skipped
         self.anim=False	# Animations found and skipped
+        self.log = output.log
 
         assert(scale==1)	# new-style objects are scaled when placed
 
@@ -26,8 +27,9 @@ class ProcScen:
         amap=[]
         scen=[]
         data={}
-        
-        if bgl.read(4)!='RIFF': raise IOError
+
+        header = bgl.read(4)
+        if header != 'RIFF': raise IOError('%s is not RIFF' % header)
         (mdlsize,)=unpack('<I', bgl.read(4))
         endmdl=bgl.tell()+mdlsize
         if bgl.read(4)!='MDLX': raise IOError
@@ -71,11 +73,10 @@ class ProcScen:
                                        not diffuse and ((flags1 & Material.FSX_MAT_SPECULAR) and (sr,sg,sb)!=(0,0,0)) and True,
                                        flags1&Material.FSX_MAT_NO_SHADOW != 0)
                             mattex.append((m,t))
-                        if __debug__:
-                            if output.debug:
-                                output.debug.write("Materials %d\n" % len(mattex))
-                                for i in range(len(mattex)):
-                                    output.debug.write("%3d:\t%s\t%s\n" % (i, mattex[i][0], mattex[i][1]))
+                        self.log.debug("Materials %d\n" % len(mattex))
+                        for i in range(len(mattex)):
+                            self.log.debug("%3d:\t%s\t%s\n"
+                                           % (i, mattex[i][0], mattex[i][1]))
                     elif c=='INDE':
                         idx=unpack('<%dH' % (size/2), bgl.read(size))
                     elif c=='VERB':
@@ -90,19 +91,16 @@ class ProcScen:
                     elif c=='TRAN':
                         for i in range(0,size,64):
                             matrix.append(Matrix([unpack('<4f',bgl.read(16)) for j in range(4)]))
-                        if __debug__:
-                            if output.debug:
-                                output.debug.write("Matrices %d\n" % len(matrix))
-                                for i in range(len(matrix)): output.debug.write("%s = %d\n" % (matrix[i], i))
+                        self.log.debug("Matrices %d\n" % len(matrix))
+                        for i in range(len(matrix)):
+                            self.log.debug("%s = %d\n" % (matrix[i], i))
                     elif c=='AMAP':
                         for i in range(0,size,8):
                             (a,b)=unpack('<2I',bgl.read(8))
                             amap.append(b)
-                        if __debug__:
-                            if output.debug:
-                                output.debug.write("Animation map %d\n" % len(amap))
-                                for i in range(len(amap)):
-                                    output.debug.write("%2d: %2d\n" % (i, amap[i]))
+                            self.log.debug("Animation map %d\n" % len(amap))
+                            for i in range(len(amap)):
+                                self.log.debug("%2d: %2d\n" % (i, amap[i]))
                     elif c=='SCEN':
                         # Assumed to be after TRAN and AMAP sections
                         count=size/8
@@ -119,13 +117,13 @@ class ProcScen:
                                 (xchild, xpeer, xoff, xparent)=scen[peer]
                                 scen[peer]=(xchild, xpeer, xoff, parent)
                         # Replace AMAP offsets with matrix
-                        if __debug__:
-                            if output.debug: output.debug.write("Scene Graph %d\n" % len(scen))
+                        self.log.debug("Scene Graph %d\n" % len(scen))
                         for i in range(count):
                             (child, peer, offset, parent)=scen[i]
                             scen[i]=(child, peer, matrix[amap[offset/8]], parent)
-                            if __debug__:
-                                if output.debug: output.debug.write("%2d: %2d %2d %2d %2d\n" % (i, child, peer, parent, offset/8))
+                            self.log.debug("%2d: %2d %2d %2d %2d\n"
+                                           % (i, child, peer, parent,
+                                              offset / 8))
                     elif c=='LODT':
                         endt=size+bgl.tell()
                         partno=0
@@ -144,9 +142,15 @@ class ProcScen:
                                         assert (typ==1)
                                         maxlod=max(lod,maxlod)
                                         (child, peer, finalmatrix, parent)=scen[scene]
-                                        if __debug__:
-                                            if output.debug:
-                                                output.debug.write("LOD %4d: scene %d verb %d material %d tris %d voff %d vcount %d ioff %d icount %d\n" % (lod, scene, verb, material, icount/3, voff, vcount, ioff, icount))
+                                        self.log.debug("LOD %4d: scene %d "
+                                                       "verb %d material %d "
+                                                       "tris %d voff %d "
+                                                       "vcount %d ioff %d "
+                                                       "icount %d\n"
+                                                       % (lod, scene, verb,
+                                                          material, icount / 3,
+                                                          voff, vcount, ioff,
+                                                          icount))
 
                                         while parent!=-1:
                                             (child, peer, thismatrix, parent)=scen[parent]
@@ -166,8 +170,7 @@ class ProcScen:
         # Only interested in highest LOD
         objs={}	# objs by texture
         for (m,t,vt,idx,matrix) in data[maxlod]:
-            if __debug__:
-                if output.debug: output.debug.write("%s\n%s\n" % (t, matrix))
+            self.log.debug("%s\n%s\n" % (t, matrix))
             objvt=[]
             nrmmatrix=matrix.adjoint()
             if t:

@@ -127,16 +127,25 @@ class SceneryObject:
 
         # Don't add placements if we're doing a second round of apt.dat
         if output.doingexcfac: return
-        
+
         for l in self.genericbuilding:
             scale=1.0
             if D(l, 'scale'): scale=round(float(l.scale),2)
             if D(self, 'altitudeIsAgl') and not T(self, 'altitudeIsAgl'):
-                output.log('Absolute altitude (%sm) for generic building at (%12.8f, %13.8f) in file %s' % (round(alt,2), loc.lat, loc.lon, parser.filename))
+                output.log.info('Absolute altitude (%sm) for generic '
+                                'building at (%12.8f, %13.8f) in '
+                                'file %s' % (round(alt,2), loc.lat, loc.lon,
+                                             parser.filename))
             elif abs(alt)>0.1:
-                output.log('Non-zero altitude (%sm) for generic building at (%12.8f, %13.8f) in file %s' % (round(alt,2), loc.lat, loc.lon, parser.filename))
+                output.log.info('Non-zero altitude (%sm) for generic '
+                                'building at (%12.8f, %13.8f) in file %s'
+                                % (round(alt,2), loc.lat, loc.lon,
+                                   parser.filename))
             if pitch or bank:
-                output.log('Non-zero pitch/bank (%s/%s) for generic building at (%12.8f, %13.8f) in file %s' % (pitch, bank, loc.lat, loc.lon, parser.filename))
+                output.log.info('Non-zero pitch/bank (%s/%s) for generic '
+                                'building at (%12.8f, %13.8f) in file %s'
+                                % (pitch, bank, loc.lat, loc.lon,
+                                   parser.filename))
             texs=(int(l.bottomTexture), int(l.windowTexture),
                   int(l.topTexture), int(l.roofTexture))
 
@@ -245,11 +254,20 @@ class SceneryObject:
                         output.misc.append((18, loc, [a]))
 
             if D(self, 'altitudeIsAgl') and not T(self, 'altitudeIsAgl'):
-                output.log('Absolute altitude (%sm) for object %s at (%12.8f, %13.8f) in file %s' % (round(alt,2), friendly, loc.lat, loc.lon, parser.filename))
+                output.log.info('Absolute altitude (%sm) for object %s '
+                                'at (%12.8f, %13.8f) in file %s'
+                                % (round(alt,2), friendly, loc.lat, loc.lon,
+                                   parser.filename))
             elif abs(alt)>0.1:
-                output.log('Non-zero altitude (%sm) for object %s at (%12.8f, %13.8f) in file %s' % (round(alt,2), friendly, loc.lat, loc.lon, parser.filename))
+                output.log.info('Non-zero altitude (%sm) for object %s '
+                                'at (%12.8f, %13.8f) in file %s'
+                                % (round(alt,2), friendly, loc.lat, loc.lon,
+                                   parser.filename))
             if pitch or bank:
-                output.log('Non-zero pitch/bank (%s/%s) for object %s at (%12.8f, %13.8f) in file %s' % (pitch, bank, friendly, loc.lat, loc.lon, parser.filename))
+                output.log.info('Non-zero pitch/bank (%s/%s) for object %s '
+                                'at (%12.8f, %13.8f) in file %s'
+                                % (pitch, bank, friendly, loc.lat, loc.lon,
+                                   parser.filename))
             output.objplc.append((loc, heading, cmplx, name, scale))
 
 
@@ -512,9 +530,9 @@ class Airport:
                 ident=ident[:4]
             else:
                 ident=ident[:3]+ident[-1]
-            output.log('Shortened ICAO airport code from "%s" to "%s"' % (
-                self.ident, ident))
-            
+            output.log.info('Shortened ICAO airport code from "%s" to "%s"'
+                            % (self.ident, ident))
+
         if ident not in output.apt:
             output.apt[ident]=(airloc,[])
         elif self.runway or self.helipad or self.taxiwaypoint:
@@ -599,7 +617,10 @@ class Airport:
                     end=1
                 overrun[end]+=float(bp.length)
 
-            surface=surfaces[runway.surface]
+            if runway.surface not in surfaces:
+                output.log.info('ERR: Runway surface not found: %s!'
+                                % runway.surface)
+            surface = surfaces.get(runway.surface, 15)
 
             for light in runway.lights:
                 if not E(light, 'center', 'NONE'):
@@ -894,7 +915,8 @@ class Airport:
                 continue
             for l in n0.links:
                 if l.nodes[0]==n1 or l.nodes[1]==n1:
-                    if output.debug: output.debug.write('Removed ATC hack "Overlay" link over %s\n' % n)
+                    output.log.debug('Removed ATC hack "Overlay" link '
+                                     'over %s\n' % n)
                     n0.links.remove(l)
                     n1.links.remove(l)
                     alllinks.remove(l)
@@ -968,7 +990,7 @@ class Airport:
             (o,m)=r1.follow(l3, 3)
             if not o or o!=n0: continue
 
-            if output.debug: output.debug.write('Removed ATC hack "Diamond" link over %s\n' % n)
+            output.log.debug('Removed ATC hack "Diamond" link over %s\n' % n)
             if False:	# This tends to render badly
                 # Now do it again, marking each taxi link as closed
                 n0.follow(l0, cb=lambda o,l: setattr(l,'closed',True))
@@ -1025,8 +1047,9 @@ class Airport:
                         runway=l
                         distance=d
             if distance>=16000:
-                if output.debug:
-                    output.debug.write("Can't find a runway for hold short at (%12.8f, %13.8f)\n" % (n.loc.lat, n.loc.lon))
+                output.log.debug("Can't find a runway for hold short "
+                                 "at (%12.8f, %13.8f)\n"
+                                 % (n.loc.lat, n.loc.lon))
                 continue	# WTF - ignore
             else:
                 n.name="%s hold short" % runway.name.split()[1]
@@ -1035,9 +1058,11 @@ class Airport:
             # (but can be further depending on angle relative to runway).
             # We'll cut off search at (arbitrary) 150m from runway *node*.
             hotlinks=n.runwaylinks(n, runway.hotness, [l for l in alllinks if l.type in ['TAXI','PATH']], 150)
-            if output.debug and not hotlinks:
-                output.debug.write("Can't find links to runway %s for hold short at (%12.8f, %13.8f)\n"  % (runway.hotness, n.loc.lat, n.loc.lon))
-            #if output.debug:	#XXX
+            if not hotlinks:
+                output.log.debug("Can't find links to runway %s for hold "
+                                 "short at (%12.8f, %13.8f)\n"
+                                 % (runway.hotness, n.loc.lat, n.loc.lon))
+            #if output.log.debug_enabled:	#XXX
             #    print runway.hotness, n
             #    for l in hotlinks:
             #        print l
@@ -1313,9 +1338,10 @@ class ModelData:
 
 class Parse:
     def __init__(self, fd, srcfile, output):
-        if output.debug: output.debug.write('%s\n' % srcfile.encode("latin1"))
+        output.log.debug('%s\n' % srcfile)
         self.filename=basename(srcfile)
         self.output=output
+        self.log = output.log
         self.parents=[]
         self.gencount=0
         self.genmulticache={}
@@ -1329,8 +1355,7 @@ class Parse:
 
     def start_element(self, name, attrs):
         # dump tree
-        #if self.output.debug:
-        #    self.output.debug.write("%s%s(%s)\n" % ('  '*len(self.parents), name, attrs))
+        #self.log.debug("%s%s(%s)\n" % ('  ' * len(self.parents), name, attrs))
         try:
             if self.parents:
                 parent=self.parents[-1]
@@ -1341,8 +1366,8 @@ class Parse:
             self.parents.append(elem)
         except (KeyError, AttributeError):
             if name=='FSData': return
-            if self.output.debug:
-                self.output.debug.write("Skipping %s%s(%s)\n" % ('.'*len(self.parents), name, attrs))
+            self.log.debug("Skipping %s%s(%s)\n"
+                           % ('.' * len(self.parents), name, attrs))
             self.parents.append(None)
             
     def end_element(self, name):

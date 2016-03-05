@@ -492,8 +492,8 @@ class MainWindow(wx.Frame):
 
         try:
             logpath = abspath(join(xppath, 'summary.txt'))
-            self.log = Log(logpath)
-            self.log.write("%sTarget:\tX-Plane %d\n\n" % (sysdesc, xpver))
+            self.log = Log(logpath, __debug__)
+            self.log.info("%sTarget:\tX-Plane %d\n\n" % (sysdesc, xpver))
         except IOError, e:
             myMessageBox('Can\'t write to folder\n"%s"' % xppath,
                          e.strerror, wx.ICON_ERROR|wx.OK, self)
@@ -505,7 +505,7 @@ class MainWindow(wx.Frame):
 
         try:
             output = Output(fspath, lbpath, xppath, dumplib, season, xpver,
-                            status, self.log.write, refresh, True)
+                            status, self.log, refresh)
             output.scanlibs()
             output.process()
             output.proclibs()
@@ -514,7 +514,6 @@ class MainWindow(wx.Frame):
             if self.progress:
                 self.progress.Destroy()
                 self.progress=None
-            if output.debug: output.debug.close()
             if exists(self.log.path):
                 myMessageBox('Displaying summary\n"%s"' % self.log.path,
                              'Done.', wx.ICON_INFORMATION | wx.OK, self)
@@ -523,11 +522,11 @@ class MainWindow(wx.Frame):
                 myMessageBox('', 'Done.', wx.ICON_INFORMATION|wx.OK, self)
 
         except FS2XError, e:
-            self.log.write('%s\n' % e.msg)
+            self.log.info('%s\n' % e.msg)
             myMessageBox(e.msg, 'Error during conversion.', wx.ICON_ERROR|wx.OK, self)
 
         except:
-            self.log.write('\nInternal error\n')
+            self.log.info('\nInternal error\n')
             print_exc(None, self.log.file)
             self.log.view()
             myMessageBox('Please report error in log\n"%s"' % self.log.path,

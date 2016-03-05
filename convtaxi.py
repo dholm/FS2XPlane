@@ -366,12 +366,11 @@ def taxilayout(allnodes, alllinks, surfaceheading, output, aptdat=None, ident="u
 
     # Edges ----------------------------------------------------------------
 
-    if output.debug:
-        output.debug.write("Layout %s\n" % ident)
-        if __debug__:
-            nodesfile=open(join(output.xppath, ident+"_nodes.txt"), "wt")
-            interfile=open(join(output.xppath, ident+"_inter.txt"), "wt")
-            pointfile=open(join(output.xppath, ident+"_point.txt"), "wt")
+    output.log.debug("Layout %s\n" % ident)
+    if output.log.debug_enabled:
+        nodesfile=open(join(output.xppath, ident+"_nodes.txt"), "wt")
+        interfile=open(join(output.xppath, ident+"_inter.txt"), "wt")
+        pointfile=open(join(output.xppath, ident+"_point.txt"), "wt")
 
     # First find intersection & bezier points between every pair of links.
     # Then just join the dots.
@@ -385,10 +384,9 @@ def taxilayout(allnodes, alllinks, surfaceheading, output, aptdat=None, ident="u
             elinks.append((o,h,link))
         elinks.sort(lambda (o1,h1,l1),(o2,h2,l2): cmp(h2,h1)) # CCW
         
-        if __debug__:
-            if output.debug:
-                nodesfile.write("%.6f\t%.6f\n" % (n.loc.lon, n.loc.lat))
-                output.debug.write("%s node %d links\n" % (n.loc, len(elinks)))
+        if output.log.debug_enabled:
+            nodesfile.write("%.6f\t%.6f\n" % (n.loc.lon, n.loc.lat))
+            output.log.debug("%s node %d links\n" % (n.loc, len(elinks)))
 
         for i in range(len(elinks)):
             (n1,h1,link1)=elinks[i]
@@ -412,12 +410,11 @@ def taxilayout(allnodes, alllinks, surfaceheading, output, aptdat=None, ident="u
                     loc1=n.loc.biased((cos(h1)-sin(h1))*w, (-sin(h1)-cos(h1))*w).round()
                     loc2=n.loc.biased((-cos(h1)-sin(h1))*w, (sin(h1)-cos(h1))*w).round()
                 link1.intersect[end1]=[(loc1,None,0), (loc2,None,0)]
-                if __debug__:
-                    if output.debug:
-                        output.debug.write("%s stub %d\n" % (loc1, i))
-                        output.debug.write("%s stub %d\n" % (loc2, i))
-                        interfile.write("%.6f\t%.6f\n" % (loc1.lon, loc1.lat))
-                        interfile.write("%.6f\t%.6f\n" % (loc2.lon, loc2.lat))
+                if output.log.debug_enabled:
+                    output.log.debug("%s stub %d\n" % (loc1, i))
+                    output.log.debug("%s stub %d\n" % (loc2, i))
+                    interfile.write("%.6f\t%.6f\n" % (loc1.lon, loc1.lat))
+                    interfile.write("%.6f\t%.6f\n" % (loc2.lon, loc2.lat))
                 continue
             for end2 in [0,1]:
                 if link2.nodes[end2]==n: break
@@ -430,22 +427,24 @@ def taxilayout(allnodes, alllinks, surfaceheading, output, aptdat=None, ident="u
                                        w*(sin(h1)+sin(h2-pi))/2).round()
                 link1.intersect[end1][1]=(intersect,None,0)
                 link2.intersect[end2][0]=(intersect,None,0)
-                if __debug__:
-                    if output.debug: output.debug.write("%s straight %d %d %d\n" % (intersect, i, int(degrees(h1)), int(degrees(h2))))
+                output.log.debug("%s straight %d %d %d\n"
+                                 % (intersect, i, int(degrees(h1)),
+                                    int(degrees(h2))))
             else:
                 ratio=0.5/sin((h1-pi)%twopi-h2)
                 intersect=n.loc.biased(-sin(h1)*link2.width*ratio - sin(h2)*link1.width*ratio,
                                        -cos(h1)*link2.width*ratio - cos(h2)*link1.width*ratio).round()
                 link1.intersect[end1][1]=(intersect,True,0)
                 link2.intersect[end2][0]=(intersect,True,0)
-                if __debug__:
-                    if output.debug: output.debug.write("%s intersect %d %d %d\n" % (intersect, i, int(degrees(h1)), int(degrees(h2))))
-            if __debug__:
-                if output.debug: interfile.write("%.6f\t%.6f\n" % (intersect.lon, intersect.lat))
+                output.log.debug("%s intersect %d %d %d\n"
+                                 % (intersect, i, int(degrees(h1)),
+                                    int(degrees(h2))))
+            if output.log.debug_enabled:
+                interfile.write("%.6f\t%.6f\n"
+                                % (intersect.lon, intersect.lat))
             
     # Fill in bezier points. Can't do bezier control points yet
-    if __debug__:
-        if output.debug: output.debug.write("Beziers\n")
+    output.log.debug("Beziers\n")
     for link in alllinks:
         #if not link.intersect[0][0]: continue	# unlinked link!
         for end in [0,1]:
@@ -484,10 +483,8 @@ def taxilayout(allnodes, alllinks, surfaceheading, output, aptdat=None, ident="u
                                     l2.intersect[e2][side]=(loc2,None,bad2)
                 bad1=bad2=1
                 bez1=bez2=None
-                if __debug__:
-                    if output.debug:
-                        output.debug.write("%s %s %s degenerate1\n" % (loc1, bez1, bad1))
-                        output.debug.write("%s %s %s degenerate2\n" % (loc2, bez2, bad2))
+                output.log.debug("%s %s %s degenerate1\n" % (loc1, bez1, bad1))
+                output.log.debug("%s %s %s degenerate2\n" % (loc2, bez2, bad2))
 
             # eg KBJC
             d=loc1.distanceto(loc2)
@@ -499,17 +496,13 @@ def taxilayout(allnodes, alllinks, surfaceheading, output, aptdat=None, ident="u
                 # are of the same surface -> will be in same pavement
                 if bez1: bez1=(loc1+(loc2-loc1)*0.5).round()
                 if bez2: bez2=(loc1+(loc2-loc1)*0.5).round()
-                if __debug__:
-                    if output.debug:
-                        output.debug.write("%s %s %s shorten1\n" % (loc1, bez1, bad1))
-                        output.debug.write("%s %s %s shorten2\n" % (loc2, bez2, bad2))
+                output.log.debug("%s %s %s shorten1\n" % (loc1, bez1, bad1))
+                output.log.debug("%s %s %s shorten2\n" % (loc2, bez2, bad2))
             else:
                 if bez1: bez1=(loc1+(loc2-loc1)*link.width/d).round()
                 if bez2: bez2=(loc2+(loc1-loc2)*link.width/d).round()
-                if __debug__:
-                    if output.debug:
-                        output.debug.write("%s %s %s\n" % (loc1, bez1, bad1))
-                        output.debug.write("%s %s %s\n" % (loc2, bez2, bad2))
+                output.log.debug("%s %s %s\n" % (loc1, bez1, bad1))
+                output.log.debug("%s %s %s\n" % (loc2, bez2, bad2))
                     
             if bez1 and abs(bez1.lat-loc1.lat)<0.00001 and abs(bez1.lon-loc1.lon)<0.00001:
                 bez1=None	# collapses to a point
@@ -519,16 +512,15 @@ def taxilayout(allnodes, alllinks, surfaceheading, output, aptdat=None, ident="u
                 bez1=None	# collapses to a point
                 #if __debug__: print "collapse2"
             link.intersect[1-end][1]=(loc2,bez2,bad2)
-            if __debug__:
-                if output.debug:
-                    if bez1:
-                        pointfile.write("%.6f\t%.6f\n" % (bez1.lon, bez1.lat))
-                    else:
-                        pointfile.write("%.6f\t%.6f\n" % (loc1.lon, loc1.lat))
-                    if bez2:
-                        pointfile.write("%.6f\t%.6f\n" % (bez2.lon, bez2.lat))
-                    else:
-                        pointfile.write("%.6f\t%.6f\n" % (loc2.lon, loc2.lat))
+            if output.log.debug_enabled:
+                if bez1:
+                    pointfile.write("%.6f\t%.6f\n" % (bez1.lon, bez1.lat))
+                else:
+                    pointfile.write("%.6f\t%.6f\n" % (loc1.lon, loc1.lat))
+                if bez2:
+                    pointfile.write("%.6f\t%.6f\n" % (bez2.lon, bez2.lat))
+                else:
+                    pointfile.write("%.6f\t%.6f\n" % (loc2.lon, loc2.lat))
                     
     tessObj = gluNewTess()
     gluTessNormal(tessObj, 0, -1, 0)
@@ -550,8 +542,7 @@ def taxilayout(allnodes, alllinks, surfaceheading, output, aptdat=None, ident="u
             for link in alllinks:
                 if link.type==t and link.surface==surface and link.width>1 and (link.draw or link.lights[0] or link.lights[1] or link.lines[0]!='NONE' or link.lines[1]!='NONE') and (not aptdat or not (output.excluded(link.nodes[0].loc) and output.excluded(link.nodes[1].loc))):
                     gluTessBeginContour(tessObj)
-                    if __debug__:
-                        if output.debug: output.debug.write("%s\n" % link)
+                    output.log.debug("%s\n" % link)
                     for end in [0,1]:
                         (loc,bez,bad)=link.intersect[end][1]	# left
                         if bad:
@@ -561,13 +552,11 @@ def taxilayout(allnodes, alllinks, surfaceheading, output, aptdat=None, ident="u
                             cnt=(bez+(loc-bez)*(2.0/3)).round()
                             gluTessVertex(tessObj, [bez.lon, 0, bez.lat],
                                           (bez, cnt, 0, bad, code))
-                            if __debug__:
-                                if output.debug: output.debug.write("%s %s %s\n" % (bez, cnt, code))
+                            output.log.debug("%s %s %s\n" % (bez, cnt, code))
                         else:
                             gluTessVertex(tessObj, [loc.lon, 0, loc.lat],
                                           (loc, None, 0, bad, code))
-                            if __debug__:
-                                if output.debug: output.debug.write("%s %s\n" % (loc, code))
+                            output.log.debug("%s %s\n" % (loc, code))
 
                         (loc,bez,bad)=link.intersect[end][0]	# right
                         if bad:
@@ -579,13 +568,11 @@ def taxilayout(allnodes, alllinks, surfaceheading, output, aptdat=None, ident="u
                             cnt=(bez+(bez-loc)*(2.0/3)).round()
                             gluTessVertex(tessObj, [bez.lon, 0, bez.lat],
                                           (bez, cnt, 0, bad, code))
-                            if __debug__:
-                                if output.debug: output.debug.write("%s %s %s\n" % (bez, cnt, code))
+                            output.log.debug("%s %s %s\n" % (bez, cnt, code))
                         else:
                             gluTessVertex(tessObj, [loc.lon, 0, loc.lat],
                                           (loc, None, 0, bad, code))
-                            if __debug__:
-                                if output.debug: output.debug.write("%s %s\n" % (loc, code))
+                            output.log.debug("%s %s\n" % (loc, code))
                             
                     gluTessEndContour(tessObj)
 
@@ -613,8 +600,8 @@ def taxilayout(allnodes, alllinks, surfaceheading, output, aptdat=None, ident="u
                 # Points at this node
                 gluTessBeginContour(tessObj)
                 n=len(elinks)
-                if __debug__:
-                    if output.debug: output.debug.write("node@ %s #links=%d %s %s)\n" % (node.loc, n,t,surface))
+                output.log.debug("node@ %s #links=%d %s %s)\n"
+                                 % (node.loc, n, t, surface))
                 for i in range(n):
                     (n1,h1,link1,end1)=elinks[i]	# this one
                     if link1.type!=t and (link1.type=='VEHICLE' or t=='VEHICLE'):
@@ -626,8 +613,7 @@ def taxilayout(allnodes, alllinks, surfaceheading, output, aptdat=None, ident="u
                         else:
                             break
                     else:
-                        if __debug__:
-                            if output.debug: output.debug.write("is a stub0\n")
+                        output.log.debug("is a stub0\n")
                         break	# Do nothing for stubs
                     for j in range(1,len(elinks)):
                         (n2,h2,link2,end2)=elinks[(i+j)%n]
@@ -636,19 +622,18 @@ def taxilayout(allnodes, alllinks, surfaceheading, output, aptdat=None, ident="u
                         else:
                             break
                     else:
-                        if __debug__:
-                            if output.debug: output.debug.write("is a stub2\n")
+                        output.log.debug("is a stub2\n")
                         break	# Do nothing for stubs
 
-                    if __debug__:
-                        if output.debug: output.debug.write("link to %s %s %s\n" % (link1.nodes[1-end1].loc, link1.type, link1.surface))
+                    output.log.debug("link to %s %s %s\n"
+                                     % (link1.nodes[1 - end1].loc, link1.type,
+                                        link1.surface))
 
                     if n0==n2:
                         angle=(h1-pi-h2)%twopi
                         if angle<0.1 or angle>twopi-0.1 or abs(h1-h2)<0.1:
                             # straight - nothing to do
-                            if __debug__:
-                                if output.debug: output.debug.write("is straight\n")
+                            output.log.debug("is straight\n")
                             break
 
                     (loc1,bez1,bad1)=link1.intersect[end1][0]	# right
@@ -673,8 +658,7 @@ def taxilayout(allnodes, alllinks, surfaceheading, output, aptdat=None, ident="u
                                     loc2=node.loc
                                     bez2=None
                                     code2=''
-                            if __debug__:
-                                if output.debug: output.debug.write("fillets\n")
+                            output.log.debug("fillets\n")
                         else:
                             # do simplified pavement
                             (loc0,bez0,bad0)=link0.intersect[end0][1]	# left
@@ -688,43 +672,48 @@ def taxilayout(allnodes, alllinks, surfaceheading, output, aptdat=None, ident="u
                             if bez3: debez.append(loc2)
                             bez1=bez2=None
                             code1=code2=''
-                            if __debug__:
-                                if output.debug: output.debug.write("simplified\n")
+                            output.log.debug("simplified\n")
                             
                     if bez1:
                         if (h0-h1)%twopi>pi:
                             cnt1=(bez1+(loc1-bez1)*(2.0/3)).round()
                             gluTessVertex(tessObj, [cnt1.lon, 0, cnt1.lat],
                                           (cnt1, None, 0, 1, code1))	# dummy
-                            if __debug__:
-                                if output.debug: output.debug.write("%s dummy1 %d\n" % (cnt1, int(degrees((h0-h1)%twopi))))
+                            output.log.debug("%s dummy1 %d\n"
+                                             % (cnt1,
+                                                int(degrees((h0 - h1) %
+                                                            twopi))))
                         cnt1=(bez1+(bez1-loc1)*(2.0/3)).round()
                         gluTessVertex(tessObj, [bez1.lon, 0, bez1.lat],
                                       (bez1, cnt1, blank1, 0, code1))
-                        if __debug__:
-                            if output.debug: output.debug.write("%s %s %d %s\n" % (bez1, cnt1, int(degrees(h1-h2)%360), code1))
+                        output.log.debug("%s %s %d %s\n"
+                                         % (bez1, cnt1,
+                                            int(degrees(h1 - h2) % 360),
+                                            code1))
                     elif loc1:
                         gluTessVertex(tessObj, [loc1.lon, 0, loc1.lat],
                                       (loc1, None, blank1, 0, code1))
-                        if __debug__:
-                            if output.debug: output.debug.write("%s %s\n" % (loc1, code1))
+                        output.log.debug("%s %s\n" % (loc1, code1))
 
                     if bez2:
                         cnt2=(bez2+(loc2-bez2)*(2.0/3)).round()
                         gluTessVertex(tessObj, [bez2.lon, 0, bez2.lat],
                                       (bez2, cnt2, blank2, 0, code2))
-                        if __debug__:
-                            if output.debug: output.debug.write("%s %s %d %s\n" % (bez2, cnt2, int(degrees(h1-h2)%360), code2))
+                        output.log.debug("%s %s %d %s\n"
+                                         % (bez2, cnt2,
+                                            int(degrees(h1 - h2) % 360),
+                                            code2))
                         if (h1-h2)%twopi>pi:
                             gluTessVertex(tessObj, [cnt2.lon, 0, cnt2.lat],
                                           (cnt2, None, 0, 1, code2))	# dummy
-                            if __debug__:
-                                if output.debug: output.debug.write("%s dummy2 %d\n" % (cnt2, int(degrees((h1-h2)%twopi))))
+                            output.log.debug("%s dummy2 %d\n"
+                                             % (cnt2,
+                                                int(degrees((h1 - h2) %
+                                                            twopi))))
                     elif loc2:
                         gluTessVertex(tessObj, [loc2.lon, 0, loc2.lat],
                                       (loc2, None, blank2, 0, code2))
-                        if __debug__:
-                            if output.debug: output.debug.write("%s %s\n" % (loc2, code2))
+                        output.log.debug("%s %s\n" % (loc2, code2))
                 gluTessEndContour(tessObj)
 
             gluTessEndPolygon(tessObj)
@@ -751,8 +740,7 @@ def taxilayout(allnodes, alllinks, surfaceheading, output, aptdat=None, ident="u
                             j+=1
 
             # Tessellator spits out points in any order - first split out exteriors
-            if __debug__:
-                if output.debug: output.debug.write("After tessellation:\n")
+            output.log.debug("After tessellation:\n")
             outpoints=[]
             j=0
             while j<len(newpoints):
@@ -774,10 +762,12 @@ def taxilayout(allnodes, alllinks, surfaceheading, output, aptdat=None, ident="u
                     newpoints.pop(j)
                 else:
                     j+=1
-                if __debug__:
-                    if output.debug:
-                        if area2>=0: output.debug.write("exterior %3d %s %s\n" % (n, area2, area2>=1e-8))
-                        else: output.debug.write("interior %3d %s %s\n" % (n, area2, area2<=-1e-8))
+                if area2 >= 0:
+                    output.log.debug("exterior %3d %s %s\n"
+                                     % (n, area2, area2 >= 1e-8))
+                else:
+                    output.log.debug("interior %3d %s %s\n"
+                                     % (n, area2, area2 <=- 1e-8))
     
             # Attach interiors to enclosing exterior. Assumes no intersections
             # http://local.wasp.uwa.edu.au/~pbourke/geometry/insidepoly/ Sln 2
@@ -817,10 +807,11 @@ def taxilayout(allnodes, alllinks, surfaceheading, output, aptdat=None, ident="u
                         # wtf - all interior points were coincident with exterior
                         #if __debug__: print "wtf", angle
                         newpoints.pop(j)
-            if __debug__:
-                if output.debug and newpoints:
-                    output.debug.write("Unassigned interiors!\n")
-                    for points in newpoints: output.debug.write("%d %s\n" % (len(points), points[0][0]))
+                if newpoints:
+                    output.log.debug("Unassigned interiors!\n")
+                    for points in newpoints:
+                        output.log.debug("%d %s\n"
+                                         % (len(points), points[0][0]))
             
             # Finally output the polygons
             out=[]
@@ -850,8 +841,8 @@ def taxilayout(allnodes, alllinks, surfaceheading, output, aptdat=None, ident="u
                         if blank==1 and bez:	# start of blank
                             out.append(AptNav(111, "%12.8f %13.8f" % (pt.lat, pt.lon)))
                     if out[-1].code==110:
-                        if output.debug:
-                            output.debug.write("Empty polygon %s\n" % out.pop())
+                        if output.log.debug_enabled:
+                            output.log.debug("Empty polygon %s\n" % out.pop())
                         else:
                             out.pop()
                     #assert(out[-1].code!=110)
@@ -1251,10 +1242,10 @@ def apronlayout(points, surface, surfaceheading, output, aptdat=None, ident="unk
                 # wtf - all interior points were coincident with exterior
                 if __debug__: print "wtf", angle
                 newpoints.pop(j)
-    if __debug__:
-        if output.debug and newpoints:
-            output.debug.write("Unassigned interiors!\n")
-            for points in newpoints: output.debug.write("%d %s\n" % (len(points), points[0]))
+    if newpoints:
+        output.log.debug("Unassigned interiors!\n")
+        for points in newpoints:
+            output.log.debug("%d %s\n" % (len(points), points[0]))
             
     # Finally output the polygons
     out=[]

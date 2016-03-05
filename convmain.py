@@ -19,7 +19,7 @@ import convxml
 
 class Output:
     def __init__(self, fspath, lbpath, xppath, dumplib, season, xpver,
-                 status, log, refresh, debug):
+                 status, log, refresh):
 
         self.dumplib=dumplib
         if dumplib:
@@ -109,10 +109,10 @@ class Output:
         if not self.dumplib and (basename(dirname(xppath)).lower()!='custom scenery' or not isdir(dirname(xppath))):
             raise FS2XError('The "X-Plane scenery location" must be a sub-folder\nof X-Plane\'s Custom Scenery folder.')
         for path, dirs, files in walk(xppath):
-            for f in dirs+files:
-                if f!='summary.txt' and not f.startswith('.'):
-                    raise FS2XError('"%s" already exists and is not empty' % (
-                        xppath))
+            for f in dirs + files:
+                if not log.is_logfile(f) and not f.startswith('.'):
+                    raise FS2XError('"%s" already exists and is not empty'
+                                    % xppath)
 
         for exe in [self.bglexe, self.xmlexe, self.pngexe, self.dsfexe]:
             if exe and not exists(exe):
@@ -161,13 +161,6 @@ class Output:
             self.subst[line[0]]=(line[1],float(line[2]),float(line[3]),float(line[4]))
         stock.close()
 
-        if debug:
-            # note full debugging also requires non-optimised execution
-            if not isdir(self.xppath): mkdir(self.xppath)
-            self.debug=file(join(self.xppath,'debug.txt'),'at')
-        else:
-            self.debug=None
-
         # See if scenery package is registered eg by Addon Manager.
         # Otherwise try to emulate that the demo has expired.
         self.registered=False
@@ -187,7 +180,7 @@ class Output:
                             handle2=OpenKey(handle,v)
                             if QueryValueEx(handle2, 'SerialNumber'):
                                 self.registered=True
-                                if self.debug: self.debug.write('Registered\n')
+                                self.log.debug('Registered\n')
                                 break
                             break
                         i+=1
@@ -201,7 +194,7 @@ class Output:
     # Fill out self.libobj
     def scanlibs(self):
         self.status(-1, 'Scanning libraries')
-        if self.debug: self.debug.write('Library objects\n')
+        self.log.debug('Library objects\n')
 
         for toppath in [self.fspath, self.lbpath]:	# do local first
             if not toppath:
@@ -231,12 +224,12 @@ class Output:
                     try:
                         bgl=file(bglname, 'rb')
                     except IOError:
-                        self.log("Can't read \"%s\"" % filename)
+                        self.log.info("Can't read \"%s\"" % filename)
                         self.done[bglname]=True
                         continue
                     c=bgl.read(2)
                     if len(c)!=2:
-                        self.log("Can't read \"%s\"" % filename)
+                        self.log.info("Can't read \"%s\"" % filename)
                         self.done[bglname]=True
                         continue
                     done=True
@@ -280,19 +273,20 @@ class Output:
                                 # Check for uncompressed version
                                 tmp=join('Resources',basename(bglname).lower())
                                 if not exists(tmp):
-                                    self.log("Can't parse compressed file %s"%(
-                                        filename))
+                                    self.log.info("Can't parse compressed "
+                                                  "file %s" % filename)
                                     continue	# don't mark as done
                             bgl=file(tmp, 'rb')
                         # Exclusions
                         if excbase:
                             bgl.seek(excbase)
-                            if self.debug: self.debug.write('%s\n' % filename.encode("latin1", 'replace'))
+                            self.log.debug('%s\n' % filename)
                             try:
                                 ProcEx(bgl, self)
                             except:
-                                self.log("Can't parse Exclusion section in file %s" % filename)
-                                if self.debug: print_exc(None, self.debug)
+                                self.log.info("Can't parse Exclusion section "
+                                              "in file %s" % filename)
+                                print_exc(None, self.log.debug_file)
                         if not libbase: continue
                         bgl.seek(libbase)
                         try:
@@ -331,12 +325,17 @@ class Output:
                                     name=uid
 
                                 if not uid in self.libobj:	# 1st wins
-                                    if self.debug and toppath==self.fspath: self.debug.write("%s:\t%s\t%s\tFS8\n" % (uid, name, bglname[len(toppath)+1:]))
+                                    if toppath == self.fspath:
+                                        self.log.debug("%s:\t%s\t%s\tFS8\n"
+                                                       % (uid, name,
+                                                          bglname[len(toppath) +
+                                                                  1:]))
                                     self.libobj[uid]=(8, bglname, tmp, libbase+off+hdsize, rcsize, name, scale)
                                 bgl.seek(pos+20)
                         except:
-                            self.log("Error parsing FS8 library %s" % filename)
-                            if self.debug: print_exc(None, self.debug)
+                            self.log.info("Error parsing FS8 library %s"
+                                          % filename)
+                            print_exc(None, self.debug_file)
 
                     elif c==0x201:
                         # FS9 or FSX
@@ -351,9 +350,13 @@ class Output:
                             #print "%x %x %d" % (typ,x,subsections)
                             if typ!=0x2b:	# 2b=MDL data
                                 if typ==0x6e:	# Ortho and DEM BGLs seem to have a 6e section
-                                    self.log('Skipping terrain data in file %s' % filename)
+                                    self.log.info('FS9/X: Skipping terrain '
+                                                  'data in file %s'
+                                                  % filename)
                                 elif typ==0x65:
-                                    self.log("Skipping traffic data in file %s" % filename)
+                                    self.log.info("FS9/X: Skipping traffic "
+                                                  "data in file %s"
+                                                  % filename)
                                 else:
                                     done=False	# Something else - perhaps Facility data
                                 continue
@@ -407,13 +410,18 @@ class Output:
                                         name=uid
 
                                     if not uid in self.libobj:
-                                        if self.debug and toppath==self.fspath: self.debug.write("%s:\t%s\t%s\tFS%d\n" % (uid, name, bglname[len(toppath)+1:], mdlformat))
+                                        if toppath == self.fspath:
+                                            self.log.debug("%s:\t%s\t%s\tFS%d\n"
+                                                           % (uid, name,
+                                                              bglname[len(toppath) + 1:],
+                                                              mdlformat))
                                         self.libobj[uid]=(mdlformat,
                                                           bglname, bglname,
                                                           recordtbl+off,rcsize,
                                                           name, 1.0)
                     else:
-                        self.log("Can't parse file \"%s\". Is this a BGL file?" % filename)
+                        self.log.info("Can't parse file \"%s\".  Is this a "
+                                      "BGL file?" % filename)
                     bgl.close()
                     if done: self.done[bglname]=True
 
@@ -422,7 +430,7 @@ class Output:
     def procphotos(self):
         if self.dumplib: return
         self.status(-1, 'Reading Photoscenery')
-        if self.debug: self.debug.write('Photoscenery\n')
+        self.log.debug('Photoscenery\n')
         for path, dirs, files in walk(self.fspath):
             if basename(path).lower()=='texture':
                 # Only look at BMPs in 'texture' directory
@@ -430,15 +438,14 @@ class Output:
                     self.status(0, path[len(self.fspath)+1:])
                     ProcPhoto(path, self)
                 except:
-                    self.log("Can't parse this photoscenery")
-                    if self.debug: print_exc(None, self.debug)
-
+                    self.log.info("Can't parse this photoscenery")
+                    print_exc(None, self.log.debug_file)
 
     # Fill out self.objplc, self.objdat, self.polyplc, self.polydat
     def process(self):
         if self.dumplib: return
         self.status(-1, 'Reading BGLs')
-        if self.debug: self.debug.write('Procedural scenery\n')
+        self.log.debug('Procedural scenery\n')
         xmls=[]
         for path, dirs, files in walk(self.fspath):
             if basename(path).lower()!='scenery':
@@ -457,12 +464,12 @@ class Output:
                 try:
                     bgl=file(bglname, 'rb')
                 except IOError:
-                    self.log("Can't read \"%s\"" % bglname)
+                    self.log.info("Can't read \"%s\"" % bglname)
                     continue
                 c=bgl.read(2)
                 if len(c)!=2:
-                    self.log("Can't read \"%s\"" % bglname)
-                    continue                
+                    self.log.info("Can't read \"%s\"" % bglname)
+                    continue
                 tmp=None
                 (c,)=unpack('<H', c)
                 if c&0xff00==0:
@@ -486,22 +493,23 @@ class Output:
                         else:
                             helper(self.bglexe, bglname, tmp)
                         if not exists(tmp):
-                            self.log("Can't parse compressed file %s" % (
-                                filename))
+                            self.log.info("Can't parse compressed file %s"
+                                          % filename)
                             continue
                         bgl=file(tmp, 'rb')
                     try:
                         convbgl.Parse(bgl, bglname, self)
                     except:
-                        self.log("Can't read \"%s\"" % filename)
-                        if self.debug: print_exc(None, self.debug)
+                        self.log.info("Can't read \"%s\"" % filename)
+                        print_exc(None, self.log.debug_file)
                 elif c==0x201:
                     xmls.append(bglname)
                 else:
-                    self.log("Can't parse \"%s\". Is this a BGL file?" % (
-                        filename))
+                    self.log.info("Can't parse \"%s\".  Is this a BGL file?"
+                                  % filename)
                 bgl.close()
-                if tmp and exists(tmp) and not self.debug: unlink(tmp)
+                if tmp and exists(tmp) and not self.log.debug_enabled:
+                    unlink(tmp)
 
         # set up exclusions that affect facilities
         self.excfac=self.exc
@@ -520,15 +528,17 @@ class Output:
                         xmlfile=file(tmp, 'rU')
                         convxml.Parse(xmlfile, bglname, self)
                         xmlfile.close()
-                        if not self.debug: unlink(tmp)
+                        if not self.log.debug_enabled:
+                            unlink(tmp)
                     except FS2XError:
                         raise
                     except:
-                        self.log("Can't parse file %s" % basename(bglname))
-                        if self.debug: print_exc(None, self.debug)
+                        self.log.info("Can't parse file %s"
+                                      % basename(bglname))
+                        print_exc(None, self.log.debug_file)
                 else:
-                    self.log("Can't parse file %s" % basename(bglname))
-                    if self.debug: self.debug.write("%s\nError: %s\n" % (bglname,x))
+                    self.log.info("Can't parse file %s" % basename(bglname))
+                    self.log.debug("%s\nError: %s\n" % (bglname, x))
             if not self.doexcfac or self.doingexcfac or not self.needfull: break
             # Do them again, this time with exclusions
             self.aptfull=self.apt
@@ -544,7 +554,7 @@ class Output:
 
         if self.objplc:
             self.status(-1, 'Reading library objects')
-            if self.debug: self.debug.write('Library objects\n')
+            self.log.debug('Library objects\n')
         lasttexdir=None
         i=0
         while i<len(self.objplc):
@@ -567,7 +577,8 @@ class Output:
                 continue	# Already got it
 
             # Substitue for stock objects
-            if uid in self.stock and not (self.debug and self.dumplib):
+            if uid in self.stock and not (self.log.debug_enabled and
+                                          self.dumplib):
                 obj=makestock(name, self)
                 if obj:
                     self.objdat[name]=[obj]
@@ -577,7 +588,7 @@ class Output:
 
             # Convert the library object
             filename=basename(bglname)
-            if self.debug: self.debug.write('%s %s FS%s\n' % (bglname.encode("latin1", 'replace'), name, mdlformat))
+            self.log.debug('%s %s FS%s\n' % (bglname, name, mdlformat))
             self.status(i*100.0/len(self.objplc), name)
             i+=1
             scen=None
@@ -620,16 +631,16 @@ class Output:
                             bgl.seek(size,1)
                     data+=bgldata
                     if not data:
-                        if self.debug: self.debug.write('!No data\n')
+                        self.log.debug('!No data\n')
                         continue
                     if scen: scen+=len(data)	# Offset from first instruction
                     if tran: tran+=len(data)	# Offset from first instruction
                     data+=tbldata	# Table data must be last
                 except:
-                    self.log("Can't parse object %s in file %s" % (
-                        name, filename))
+                    self.log.info("Can't parse object %s in file %s"
+                                  % (name, filename))
                     bgl.close()
-                    if self.debug: print_exc(None, self.debug)
+                    print_exc(None, self.debug_file)
                     continue
                 # Write a flat BGL section
                 bgl.close()
@@ -655,18 +666,23 @@ class Output:
                 else:
                     p=convbgl.ProcScen(bgl, offset+size, libscale, name, bglname, lasttexdir, self, scen, tran)
                 if p.anim:
-                    self.log("Skipping animation in object %s in file %s" % (name, filename))
-                    if self.debug: self.debug.write("Animation\n")
+                    self.log.info("Skipping animation in object %s in "
+                                  "file %s" % (name, filename))
+                    self.log.debug("Animation\n")
                 if p.old:
-                    self.log("Skipping pre-FS2002 scenery in object %s in file %s" % (name, filename))
+                    self.log.info("Skipping pre-FS2002 scenery in object %s "
+                                  "in file %s" % (name, filename))
 
-                    if self.debug: self.debug.write("Pre-FS2002\n")
+                    self.log.debug("Pre-FS2002\n")
                 if p.rrt:
-                    self.log("Skipping pre-FS2004 runways and/or roads in object %s in file %s" % (name, filename))
-                    if self.debug: self.debug.write("Old-style rr\n")
+                    self.log.info("Skipping pre-FS2004 runways and/or roads "
+                                  "in object %s in file %s"
+                                  % (name, filename))
+                    self.log.debug("Old-style rr\n")
             except:
-                self.log("Can't parse object %s in file %s" % (name, filename))
-                if self.debug: print_exc(None, self.debug)
+                self.log.info("Can't parse object %s in file %s"
+                              % (name, filename))
+                print_exc(None, self.log.debug_file)
             bgl.close()
 
 
@@ -689,10 +705,10 @@ class Output:
                     break		# ok
             else:
                 self.apt.pop(i)		# No runway. Bye
-            
+
         if not self.apt:
             if not self.dumplib:
-                self.log("No airport definition found!")
+                self.log.info("No airport definition found!")
         else:
             # attach beacons, windsocks and taxiways to corresponding airport
             for (code, loc, data) in self.misc:
@@ -715,7 +731,9 @@ class Output:
                 else:
                     name="taxiway"
                 if distance>=16000:	# X-Plane limit is 10 miles
-                    self.log("Can't find an airport for %s at (%12.8f, %13.8f)" % (name, loc.lat, loc.lon))
+                    self.log.info("Can't find an airport for %s at "
+                                  "(%12.8f, %13.8f)"
+                                  % (name, loc.lat, loc.lon))
                 elif code==100:		# runway
                     # Find and update matching XML-defined runway
                     # Presence of a BGL-defined duplicate runway implies that
@@ -776,8 +794,11 @@ class Output:
                             self.apt[airport][1].insert(1,data[0])
                             if self.aptfull: self.aptfull[airport][1].insert(1,data[0])
                         else:
-                            self.log("Can't find an airport for %s at (%12.8f, %13.8f)" % (name, loc.lat, loc.lon))
-                            if self.debug: self.debug.write('Can\'t place runway "%s"\n' % data[0])
+                            self.log.info("Can't find an airport for %s at "
+                                          "(%12.8f, %13.8f)"
+                                          % (name, loc.lat, loc.lon))
+                            self.log.debug('Can\'t place runway "%s"\n'
+                                           % data[0])
                 elif code==110:
                     # Add taxiways and roads before aprons so overlay them
                     for i in range(len(self.apt[airport][1])):
@@ -916,11 +937,11 @@ class Output:
             fslayers[2]='terrain +3'	#  "
             fslayers[3]='terrain +4'	#  "
         if __debug__:
-            if fslayers and self.debug:
-                self.debug.write("\nLayer mapping:\n")
+            if fslayers:
+                self.log.debug("\nLayer mapping:\n")
                 for key in sorted(fslayers.keys()):
-                    self.debug.write("%02d -> %s\n" % (key, fslayers[key]))
-                self.debug.write("\n")
+                    self.log.debug("%02d -> %s\n" % (key, fslayers[key]))
+                self.log.debug("\n")
 
         # write out objects
         keys=objdef.keys()
@@ -934,9 +955,9 @@ class Output:
                     for obj in self.objdat[name]:
                         obj.export(scale, self, fslayers)
             elif name in self.stock.values():
-                self.log('Object %s is a built-in object' % name)
+                self.log.info('Object %s is a built-in object' % name)
             elif '/' not in name:	# Not substituted library object
-                self.log('Object %s not found' % name)
+                self.log.info('Object %s not found' % name)
             elif name.startswith('opensceneryx/'):
                 self.usesopensceneryx=True
             i+=1
@@ -951,7 +972,7 @@ class Output:
             return
 
         if self.usesopensceneryx:
-            self.log('Using objects from the OpenSceneryX library')
+            self.log.info('Using objects from the OpenSceneryX library')
             copyfile(join('Resources','opensceneryx_library.txt'), join(self.xppath, 'library.txt'))
             mkdir(join(self.xppath,'opensceneryx'))
             for filename in listdir('Resources'):
@@ -1134,7 +1155,8 @@ class Output:
             x=helper(self.dsfexe, '-text2dsf', dstname, dsfname)
             if not exists(dsfname):
                 raise FS2XError("Can't write DSF %s.dsf\n%s" % (tilename, x))
-            if not self.debug: unlink(dstname)
+            if not self.log.debug_enabled:
+                unlink(dstname)
 
 
     # Should taxiway node be suppressed?
@@ -1142,7 +1164,7 @@ class Output:
         for (typ, sw, ne) in self.excfac:
             if sw.lat <= p.lat <= ne.lat and sw.lon <= p.lon <= ne.lon:
                 self.needfull=True
-                if self.debug: self.debug.write("Excluded: %s\n" % p)
+                self.log.debug("Excluded: %s\n" % p)
                 return self.doexcfac
         return False
 
