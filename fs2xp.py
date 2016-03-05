@@ -33,14 +33,15 @@
 
 import argparse
 
-from os import chdir, mkdir
+from os import chdir
 from os.path import (abspath, normpath, basename, dirname, pardir, exists,
                      isdir, join)
 from sys import exit, argv
 from traceback import print_exc
 
 from convmain import Output
-from convutil import FS2XError, viewer
+from convutil import FS2XError
+from log import Log
 
 
 # callbacks
@@ -52,28 +53,6 @@ def status(percent, msg):
 
 def refresh():
     pass
-
-
-class Log(object):
-    def __init__(self, path):
-        if not isdir(dirname(path)):
-            mkdir(dirname(path))
-        self.logpath = path
-        self.logfile = file(path, 'at')
-
-    @property
-    def file(self):
-        return self.logfile
-
-    def close(self):
-        self.logfile.close()
-
-    def view(self):
-        status(-1, 'Displaying log "%s"' % self.logpath)
-        viewer(self.logpath)
-
-    def write(self, msg):
-        self.logfile.write('%s\n' % msg.encode('latin1', 'replace'))
 
 
 def parse_args():
@@ -140,6 +119,7 @@ def main():
         if output.debug:
             output.debug.close()
         elif exists(log.path):
+            status(-1, 'Displaying log "%s"' % log.path)
             log.view()
         status(-1, 'Done.')
 
@@ -154,6 +134,7 @@ def main():
         if not args.debug:
             log.write('\nInternal error\n')
             print_exc(None, log.file)
+            status(-1, 'Displaying error log "%s"' % log.path)
             log.view()
         else:
             print

@@ -38,6 +38,9 @@ import sys	# for path
 from sys import argv, executable, exit, platform, version_info
 from traceback import print_exc
 
+from log import Log
+
+
 if platform.lower().startswith('linux') and not getenv("DISPLAY"):
     print "Can't run: DISPLAY is not set"
     exit(1)
@@ -122,10 +125,6 @@ def status(percent, msg):
         if not frame.progress.Update(percent, msg):
             raise FS2XError('Stopped')
 
-def log(msg):
-    logfile=file(frame.logname, 'at')
-    logfile.write('%s\n' % msg.encode("latin1",'replace'))
-    logfile.close()
 
 def refresh():
     app.Yield()
@@ -255,7 +254,7 @@ class MainWindow(wx.Frame):
     def __init__(self, parent, id, title):
 
         self.progress = None	# Current progress dialog (or None)
-        self.logname = None
+        self.log = None
         
         wx.Frame.__init__(self,parent,id,title)
 
@@ -492,12 +491,9 @@ class MainWindow(wx.Frame):
         xpver=self.xpver.GetSelection()+8	# zero-based
 
         try:
-            self.logname=abspath(join(xppath, 'summary.txt'))
-            if not isdir(dirname(self.logname)):
-                mkdir(dirname(self.logname))
-            logfile=file(self.logname, 'wt')
-            logfile.write("%sTarget:\tX-Plane %d\n\n" % (sysdesc,xpver))
-            logfile.close()
+            logpath = abspath(join(xppath, 'summary.txt'))
+            self.log = Log(logpath)
+            self.log.write("%sTarget:\tX-Plane %d\n\n" % (sysdesc, xpver))
         except IOError, e:
             myMessageBox('Can\'t write to folder\n"%s"' % xppath,
                          e.strerror, wx.ICON_ERROR|wx.OK, self)
@@ -508,8 +504,8 @@ class MainWindow(wx.Frame):
             return
 
         try:
-            output=Output(fspath, lbpath, xppath, dumplib, season, xpver,
-                          status,log,refresh, False)
+            output = Output(fspath, lbpath, xppath, dumplib, season, xpver,
+                            status, self.log.write, refresh, True)
             output.scanlibs()
             output.process()
             output.proclibs()
@@ -519,28 +515,23 @@ class MainWindow(wx.Frame):
                 self.progress.Destroy()
                 self.progress=None
             if output.debug: output.debug.close()
-            if exists(self.logname):
-                viewer(self.logname)
-                myMessageBox('Displaying summary\n"%s"' %(
-                    self.logname), 'Done.', wx.ICON_INFORMATION|wx.OK, self)
+            if exists(self.log.path):
+                myMessageBox('Displaying summary\n"%s"' % self.log.path,
+                             'Done.', wx.ICON_INFORMATION | wx.OK, self)
+                self.log.view()
             else:
                 myMessageBox('', 'Done.', wx.ICON_INFORMATION|wx.OK, self)
 
         except FS2XError, e:
-            if exists(self.logname):
-                logfile=file(self.logname, 'at')
-                logfile.write('%s\n' % e.msg.encode("latin1",'replace'))
-                logfile.close()
+            self.log.write('%s\n' % e.msg)
             myMessageBox(e.msg, 'Error during conversion.', wx.ICON_ERROR|wx.OK, self)
 
         except:
-            logfile=file(self.logname, 'at')
-            logfile.write('\nInternal error\n')
-            print_exc(None, logfile)
-            logfile.close()
-            viewer(self.logname)
-            myMessageBox('Please report error in log\n"%s"'% self.logname,
-                         'Internal error.', wx.ICON_ERROR|wx.OK, self)
+            self.log.write('\nInternal error\n')
+            print_exc(None, self.log.file)
+            self.log.view()
+            myMessageBox('Please report error in log\n"%s"' % self.log.path,
+                         'Internal error.', wx.ICON_ERROR | wx.OK, self)
 
         if self.progress:
             self.progress.Destroy()
