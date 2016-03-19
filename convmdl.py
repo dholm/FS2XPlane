@@ -1,8 +1,15 @@
+from chunk import Chunk
 from os.path import basename
 from struct import unpack
 
 from convbgl import findtex
 from convutil import asciify, rgb2uv, Matrix, Object, Material, Texture
+
+
+class Riff(Chunk, object):
+    def __init__(self, fil):
+        super(Riff, self).__init__(fil, align=False, bigendian=False,
+                                   inclheader=False)
 
 
 # handle FSX format library MDL file
@@ -32,43 +39,39 @@ class ProcScen:
         self.data = {}
         self.maxlod = 0
 
-        header = bgl.read(4)
-        if header != 'RIFF':
-            raise IOError('%s is not RIFF' % header)
-        (mdlsize,) = unpack('<I', bgl.read(4))
-        endmdl = bgl.tell()+mdlsize
-        typ = bgl.read(4)
-        if typ != 'MDLX':
+        riff = Riff(bgl)
+        if riff.getname() != 'RIFF':
+            raise IOError('%s is not RIFF' % riff.getname())
+        typ = riff.read(4)
+        if typ == 'MDLX':
+            self._mdlx(riff, scale, libname, texdir, output, comment)
+        else:
             raise IOError('Unknown model type %s' % typ)
-        while bgl.tell() < endmdl:
-            c = bgl.read(4)
-            (size,) = unpack('<I', bgl.read(4))
-            if c == 'MDLD':
-                end = size + bgl.tell()
-                while bgl.tell() < end:
-                    c = bgl.read(4)
-                    (size,) = unpack('<I', bgl.read(4))
-                    if c == 'TEXT':
-                        self.read_text(bgl, size)
-                    elif c == 'MATE':
-                        self.read_mate(bgl, size, texdir, output.addtexdir,
-                                       output.xpver)
-                    elif c == 'INDE':
-                        self.read_inde(bgl, size)
-                    elif c == 'VERB':
-                        self.read_verb(bgl, size)
-                    elif c == 'TRAN':
-                        self.read_tran(bgl, size)
-                    elif c == 'AMAP':
-                        self.read_amap(bgl, size)
-                    elif c == 'SCEN':
-                        self.read_scen(bgl, size)
-                    elif c == 'LODT':
-                        self.read_lodt(bgl, size)
-                    else:
-                        bgl.seek(size, 1)
-            else:
-                bgl.seek(size, 1)
+
+    def _mdlx(self, mdlx, scale, libname, texdir, output, comment):
+        mdld_parser = {
+            'TEXT': lambda chunk: self.read_text(chunk),
+            'MATE': lambda chunk: self.read_mate(chunk, texdir,
+                                                 output.addtexdir,
+                                                 output.xpver),
+            'INDE': lambda chunk: self.read_inde(chunk),
+            'VERB': lambda chunk: self.read_verb(chunk),
+            'TRAN': lambda chunk: self.read_tran(chunk),
+            'AMAP': lambda chunk: self.read_amap(chunk),
+            'SCEN': lambda chunk: self.read_scen(chunk),
+            'LODT': lambda chunk: self.read_lodt(chunk)
+        }
+        while mdlx.tell() < mdlx.getsize():
+            mdld = Riff(mdlx)
+            if mdld.getname() == 'MDLD':
+                while mdld.tell() < mdld.getsize():
+                    chunk = Riff(mdld)
+                    skip = lambda chunk: self._skip_chunk('MDLD', chunk)
+                    parse = mdld_parser.get(chunk.getname(), skip)
+                    parse(chunk)
+
+            elif len(mdld.getname()):
+                self._skip_chunk('MDLX', mdld)
 
         # objs by texture
         objs = {}
@@ -104,18 +107,24 @@ class ProcScen:
         if objs:
             output.objdat[libname] = objs.values()
 
-    def read_text(self, bgl, size):
-        self.tex.extend([bgl.read(64).strip('\0').strip()
-                         for i in range(0, size, 64)])
+    def _skip_chunk(self, section, chunk):
+        if len(chunk.getname()):
+            self.log.debug("Skipping %s chunk %r (%d bytes)..\n"
+                           % (section, chunk.getname(), chunk.getsize()))
+            chunk.skip()
 
-    def read_mate(self, bgl, size, texdir, addtexdir, xpver):
+    def read_text(self, chunk):
+        self.tex.extend([chunk.read(64).strip('\0').strip()
+                         for i in range(0, chunk.getsize(), 64)])
+
+    def read_mate(self, chunk, texdir, addtexdir, xpver):
         # http://www.fsdeveloper.com/wiki/index.php?title=MDL_file_format_(FSX)#MATE
-        for i in range(0, size, 120):
+        for i in range(0, chunk.getsize(), 120):
             (flags1, flags2, diffuse, detail, normal, specular, emissive,
              reflection, fresnel, dr, dg, db, da, sr, sg, sb, sa, sp, ds,
              normalscale, recflectionscale, po, power, bloomfloor,
              ambientscale, srcblend, dstblend, alphafunc, alphathreshhold,
-             zwritealpha) = unpack('<9I16f3I2f', bgl.read(120))
+             zwritealpha) = unpack('<9I16f3I2f', chunk.read(120))
             # Get texture names
             diffuse = ((flags1 & Material.FSX_MAT_HAS_DIFFUSE) and
                        self.tex[diffuse] or None)
@@ -162,48 +171,49 @@ class ProcScen:
                          not diffuse and
                          ((flags1 & Material.FSX_MAT_SPECULAR) and
                           (sr, sg, sb) != (0, 0, 0)) and True,
-                         flags1 & Material.FSX_MAT_NO_SHADOW != 0)
+                         flags1 & Material.FSX_MAT_NO_SHADOW != 0,
+                         (srcblend, dstblend))
             self.mattex.append((m, t))
         self.log.debug("Materials %d\n" % len(self.mattex))
         for i in range(len(self.mattex)):
             self.log.debug("%3d:\t%s\t%s\n"
                            % (i, self.mattex[i][0], self.mattex[i][1]))
 
-    def read_inde(self, bgl, size):
-        self.idx = unpack('<%dH' % (size / 2), bgl.read(size))
+    def read_inde(self, chunk):
+        self.idx = unpack('<%dH' % (chunk.getsize() / 2),
+                          chunk.read(chunk.getsize()))
 
-    def read_verb(self, bgl, size):
-        endv = size + bgl.tell()
-        while bgl.tell() < endv:
-            c = bgl.read(4)
-            (size,) = unpack('<I', bgl.read(4))
-            if c == 'VERT':
-                self.vt.append([unpack('<8f', bgl.read(32))
-                                for i in range(0, size, 32)])
-            else:
-                bgl.seek(size, 1)
+    def read_verb(self, chunk):
+        endv = chunk.getsize() + chunk.tell()
+        while chunk.tell() < endv:
+            c = Riff(chunk)
+            if c.getname() == 'VERT':
+                self.vt.append([unpack('<8f', c.read(32))
+                                for i in range(0, c.getsize(), 32)])
+            elif len(c.getname()):
+                c.skip()
 
-    def read_tran(self, bgl, size):
-        for i in range(0, size, 64):
-            self.matrix.append(Matrix([unpack('<4f', bgl.read(16))
+    def read_tran(self, chunk):
+        for i in range(0, chunk.getsize(), 64):
+            self.matrix.append(Matrix([unpack('<4f', chunk.read(16))
                                        for j in range(4)]))
         self.log.debug("Matrices %d\n" % len(self.matrix))
         for i in range(len(self.matrix)):
             self.log.debug("%s = %d\n" % (self.matrix[i], i))
 
-    def read_amap(self, bgl, size):
-        for i in range(0, size, 8):
-            (a, b) = unpack('<2I', bgl.read(8))
+    def read_amap(self, chunk):
+        for i in range(0, chunk.getsize(), 8):
+            (a, b) = unpack('<2I', chunk.read(8))
             self.amap.append(b)
             self.log.debug("Animation map %d\n" % len(self.amap))
             for i in range(len(self.amap)):
                 self.log.debug("%2d: %2d\n" % (i, self.amap[i]))
 
-    def read_scen(self, bgl, size):
+    def read_scen(self, chunk):
         # Assumed to be after TRAN and AMAP sections
-        count = size / 8
+        count = chunk.getsize() / 8
         for i in range(count):
-            (child, peer, offset, unk) = unpack('<4h', bgl.read(8))
+            (child, peer, offset, unk) = unpack('<4h', chunk.read(8))
             self.scen.append((child, peer, offset, -1))
         # Invert Child/Peer pointers to get parents
         for i in range(count):
@@ -225,9 +235,9 @@ class ProcScen:
             self.log.debug("%2d: %2d %2d %2d %2d\n"
                            % (i, child, peer, parent, offset / 8))
 
-    def read_lodt_lode_part(self, bgl, size, lod):
+    def read_lodt_lode_part(self, chunk, lod):
         (typ, scene, material, verb, voff, vcount, ioff,
-         icount, unk) = unpack('<9I', bgl.read(36))
+         icount, unk) = unpack('<9I', chunk.read(36))
         assert (typ == 1)
         self.maxlod = max(lod, self.maxlod)
         (child, peer, finalmatrix, parent) = self.scen[scene]
@@ -248,23 +258,25 @@ class ProcScen:
                                self.idx[ioff:ioff+icount],
                                finalmatrix))
 
-    def read_lodt_lode(self, bgl, size):
-        ende = size + bgl.tell()
-        (lod,) = unpack('<I', bgl.read(4))
-        while bgl.tell() < ende:
-            c = bgl.read(4)
-            (size,) = unpack('<I', bgl.read(4))
-            if c == 'PART':
-                self.read_lodt_lode_part(bgl, size, lod)
-            else:
-                bgl.seek(size, 1)
+    def read_lodt_lode(self, chunk):
+        ende = chunk.getsize() + chunk.tell()
+        (lod,) = unpack('<I', chunk.read(4))
+        while chunk.tell() < ende:
+            c = Riff(chunk)
+            if c.getname() == 'PART':
+                self.read_lodt_lode_part(c, lod)
+            elif len(c.getname()):
+                self.log.debug("Skipping lodt lode chunk %r (%d bytes)..\n"
+                               % (c.getname(), c.getsize()))
+                c.skip()
 
-    def read_lodt(self, bgl, size):
-        endt = size + bgl.tell()
-        while bgl.tell() < endt:
-            c = bgl.read(4)
-            (size,) = unpack('<I', bgl.read(4))
-            if c == 'LODE':
-                self.read_lodt_lode(bgl, size)
-            else:
-                bgl.seek(size, 1)
+    def read_lodt(self, chunk):
+        endt = chunk.getsize() + chunk.tell()
+        while chunk.tell() < endt:
+            c = Riff(chunk)
+            if c.getname() == 'LODE':
+                self.read_lodt_lode(c)
+            elif len(c.getname()):
+                self.log.debug("Skipping lodt chunk %r (%d bytes)..\n"
+                               % (c.getname(), c.getsize()))
+                c.skip()
