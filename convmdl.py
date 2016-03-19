@@ -12,9 +12,8 @@ class Riff(Chunk, object):
                                    inclheader=False)
 
 
-# handle FSX format library MDL file
-class ProcScen:
-    def __init__(self, bgl, enda, scale, libname, srcfile, texdir, output):
+class ProcMdlx(object):
+    def __init__(self, mdlx, scale, libname, texdir, output, comment):
         # Old style scenery found and skipped
         self.old = False
         # Old style runways/roads found and skipped
@@ -26,9 +25,6 @@ class ProcScen:
         # new-style objects are scaled when placed
         assert(scale == 1)
 
-        comment = ("object %s in file %s"
-                   % (libname, asciify(basename(srcfile), False)))
-
         self.tex = []
         self.mattex = []
         self.vt = []
@@ -39,16 +35,6 @@ class ProcScen:
         self.data = {}
         self.maxlod = 0
 
-        riff = Riff(bgl)
-        if riff.getname() != 'RIFF':
-            raise IOError('%s is not RIFF' % riff.getname())
-        typ = riff.read(4)
-        if typ == 'MDLX':
-            self._mdlx(riff, scale, libname, texdir, output, comment)
-        else:
-            raise IOError('Unknown model type %s' % typ)
-
-    def _mdlx(self, mdlx, scale, libname, texdir, output, comment):
         mdld_parser = {
             'TEXT': lambda chunk: self.read_text(chunk),
             'MATE': lambda chunk: self.read_mate(chunk, texdir,
@@ -130,6 +116,9 @@ class ProcScen:
                        self.tex[diffuse] or None)
             emissive = ((flags1 & Material.FSX_MAT_HAS_EMISSIVE) and
                         self.tex[emissive] or None)
+            self.log.debug("\tmat f1: %08x f2: %08x sblnd: %x dblnd: %x "
+                           "afun: %x\n"
+                           % (flags1, flags2, srcblend, dstblend, alphafunc))
             if xpver <= 10:
                 # Not supported in<=10, so no point doing lookup.
                 normal = specular = reflection = None
@@ -280,3 +269,18 @@ class ProcScen:
                 self.log.debug("Skipping lodt chunk %r (%d bytes)..\n"
                                % (c.getname(), c.getsize()))
                 c.skip()
+
+
+# handle FSX format library MDL file
+def ProcScen(bgl, enda, scale, libname, srcfile, texdir, output):
+    comment = ("object %s in file %s"
+               % (libname, asciify(basename(srcfile), False)))
+
+    riff = Riff(bgl)
+    if riff.getname() != 'RIFF':
+        raise IOError('%s is not RIFF' % riff.getname())
+    typ = riff.read(4)
+    if typ == 'MDLX':
+        return ProcMdlx(riff, scale, libname, texdir, output, comment)
+    else:
+        raise IOError('Unknown model type %s' % typ)
