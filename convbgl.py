@@ -415,6 +415,8 @@ class ProcScen:
             0xba: self.DrawLineList,
             0xbc: self.NOPi,
             0xbd: self.NOP,
+            0xc1: self.SetMaterialAnimate,
+            0xc2: self.ModWord,
             0xc4: self.SetMatrixIndirect,
         }
 
@@ -516,7 +518,7 @@ class ProcScen:
                 continue
             else:
                 self.makeobjs()	# Try to go with what we've got so far
-                self.output.log.info("!Unknown cmd %x at %x\n"
+                self.output.log.info("!Unknown cmd %x at %x"
                                      % (self.cmd, pos))
                 raise struct.error
 
@@ -1913,6 +1915,20 @@ class ProcScen:
         self.bgl.seek(2*icount,1)
 
     # opcodes c0 and above new in FS2004
+
+    def SetMaterialAnimate(self):
+        (mat, tex, count)=unpack('<3H', self.bgl.read(6))
+        (input_base, input_offset)=unpack('<2I', self.bgl.read(8))
+        self.log.debug('mat %d tex %d n %d input[%d:%d]\n'
+                       % (mat, tex, count, input_base, input_offset))
+
+    def ModWord(self):
+        (input_base, input_offset)=unpack('<2I', self.bgl.read(8))
+        (output_base, output_offset)=unpack('<2I', self.bgl.read(8))
+        (mod_base, mod_offset)=unpack('<2I', self.bgl.read(8))
+        self.log.debug('input[%d:%d], output[%d:%d] mod[%d:%d]\n'
+                       % (input_base, input_offset, output_base, output_offset,
+                          mod_base, mod_offset))
 
     def SetMatrixIndirect(self):	# c4
         # n=index into SCEN section of MDL file
