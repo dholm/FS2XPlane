@@ -379,6 +379,7 @@ class ProcScen:
             0x77: self.ScaleAGL,
             0x7a: self.FaceTTMap,
             0x7d: self.NOP,
+            0x7e: self.SetWrd,
             0x80: self.ResPnt,
             0x81: self.NOPh,
             0x83: self.ReScale,
@@ -834,7 +835,7 @@ class ProcScen:
         #self.precall(self.matrix[-1])
         #self.bgl.seek(off-14,1)
 
-    def SetWrd(self):		# 26
+    def SetWrd(self):		# 26, 7e
         (var,val)=unpack('<2h',self.bgl.read(4))
         self.vars[var]=val
 
