@@ -1204,7 +1204,7 @@ class ProcScen:
         else:
             roof=0
         newobj=None
-        name="%s-generic-%d" % (asciify(basename(self.srcfile)[:-4]), len(self.gencount)+1)
+        name="%s-generic-%d" % (asciify(basename(self.srcfile)[:-4]), len(self.gencache)+1)
         if typ==3:
             foo=(8,size_x, size_z, tuple(heights), tuple(texs))
             if foo in self.gencache:
@@ -1578,7 +1578,7 @@ class ProcScen:
             heading=0
             loc=self.loc
         newobj=None
-        name="%s-generic-%d" % (asciify(basename(self.srcfile)[:-4]), len(self.gencount)+1)
+        name="%s-generic-%d" % (asciify(basename(self.srcfile)[:-4]), len(self.gencache)+1)
         if typ in [10,11]:
             foo=(sides, size_x, size_z, tuple(heights), tuple(texs))
             if foo in self.gencache:
