@@ -2360,6 +2360,9 @@ class ProcScen:
 
         # Do polygons
         for (points, layer, heading, scale, tex) in self.polydat:
+            if not tex:
+                self.log.debug('Skipping polygon without texture.\n')
+                continue
             (fname,ext)=splitext(basename(tex.d or tex.e))
             # base and lit textures may not have same case
             if fname[-3:].lower()=='_lm': fname=fname[:-3]+"_LIT"
