@@ -76,8 +76,8 @@ class TaxiwayPath:
 class TaxiwayName:
     def __init__(self, name):
         self.name=name
-        
-                 
+
+
 # Read BGL header
 class Parse:
     def __init__(self, bgl, srcfile, output):
@@ -145,7 +145,11 @@ class Parse:
                                 raise struct.error	# wtf?
                             try:
                                 output.refresh()
-                                p=ProcScen(bgl, posa+l, 1.0, None, srcfile, texdir, output, firstarea=first, gencache=gencache, objcache=objcache)
+                                p = ProcScen(1.0, None, srcfile, texdir,
+                                             output, firstarea=first,
+                                             gencache=gencache,
+                                             objcache=objcache)
+                                p.parse(bgl, posa + l)
                                 if p.old:
                                     old=True
                                     output.log.debug("Pre-FS2002\n")
@@ -195,32 +199,232 @@ class Parse:
 
 # handle section 9 area and 10 library. libname!=None if this is a library
 class ProcScen:
-    def __init__(self, bgl, enda, scale, libname, srcfile, texdir, output, scen=None, tran=None, firstarea=True, gencache=None, objcache=None):
+    def __init__(self, scale, libname, srcfile, texdir, output, firstarea=True,
+                 gencache=None, objcache=None):
 
         self.old=False	# Old style scenery found and skipped
         self.rrt=False	# Old style runways/roads found and skipped
         self.anim=False	# Animations found and skipped
         self.cmd=0
 
-        self.bgl=bgl
-        self.enda=enda
-        self.libname=libname
-        self.name=libname	# base name for generated objects
-        self.srcfile=srcfile
-        self.texdir=texdir
+        self.bgl = None
+        self.enda = None
+        self.libname = libname
+        self.name = libname	# base name for generated objects
+        self.srcfile = srcfile
+        self.texdir = texdir
         if libname:
-            self.comment="object %s in file %s" % (
-                libname,asciify(basename(self.srcfile),False))
+            self.comment = ("object %s in file %s"
+                            % (libname, asciify(basename(self.srcfile),
+                                                False)))
         else:
-            self.comment="file %s" % asciify(basename(self.srcfile),False)	# Used for reporting
-        self.output=output
+            # Used for reporting
+            self.comment = ("file %s"
+                            % asciify(basename(self.srcfile), False))
+        self.output = output
         self.log = output.log
-        self.firstarea=firstarea
-        self.gencache=gencache
-        self.objcache=objcache
+        self.firstarea = firstarea
+        self.gencache = gencache
+        self.objcache = objcache
+        self.start = None
+
+        # State
+        self.complexity=1
+        self.loc=None
+        self.alt=0
+        self.altmsl=0
+        self.layer=None
+        self.matrix=[None]
+        self.scale=1.0		# don't know what to do with scale value in FS8 libs
+        self.basescale=self.scale
+        self.stack=[]		# (return address, layer, billboard, pop matrix?)
+        self.tex=[]
+        self.mat=[]
+        self.vtx=[None] * 2048	# DefRes/ResList limit
+        self.idx=[]		# Indices into vtx
+        self.m=None		# Index into mat
+        self.t=None		# Index into tex
+        self.lightcol=(1,1,1)
+        self.billboard=None	# Emulating billboarding
+
+        self.nodes=[]
+        self.links=[]
+        self.linktype=None	# Last road/river/taxiway (type, width, centerline)
+        self.haze=0		# Whether palette-based transparency. 0=none
+        self.zbias=0		# Polygon offsetting
+        self.surface=False	# StrRes/CntRes does lines not surface by default
+        self.concave=False
+
+        self.objdat={}		# (mat, vtx[], idx[]) by (name, loc, layer, alt, altmsl, matrix, scale, Texture)
+        self.lightdat={}	# ((x,y,z), (r,g,b)) by (name, loc, layer, alt, altmsl, matrix, scale, None)
+        self.effectdat={}	# ((x,y,z), (effect, s)) by (name, loc, layer, alt, altmsl, matrix, scale, None)
+        self.keys=[]		# ordered list of keys for indexing the above
+        self.polydat=[]		# ((points, layer, heading, scale, Texture))
+
+        self.neednight=False
+        self.dayloc=None
+        self.dayobjdat={}
+        self.daylightdat={}
+        self.dayeffectdat={}
+        self.daypolydat=[]
+
+        self.vars={
+            # Vars not listed are assumed to be 0
+            0: 0,	# dummy
+            0x02: 2,	# No idea, but used by Aerosoft to control lighting
+            0x10: 50,	# No idea, but used by Aerosoft to control lighting
+            0x5c: 255,	# Local variable used by Aerosoft in EDDF
+            #0x07e: 0,	# FS5_CG_TO_GROUND_X: ???
+            0x280: 0,	# altmsl (presumably of airplane?)
+            0x282: 1,	# beacon: rotating bitmap shifted 1 bit/3 sec
+            0x28c: 1,	# tod: 2|4 indicates night?
+            0x30A: 6,	# beacon_2: 16-bit bitmap with 0x0506 add/3 sec
+            0x30C: 8,	# beacon_3: 16-bit bitmap with 0x0708 add/3 sec
+            0x30E: 0xa,	# beacon_4: 16-bit bitmap with 0x090A add/3 sec
+            0x310: 0xc,	# beacon_5: 16-bit bitmap with 0x0B0C add/3 sec
+            #0x312-31a	# usrvar-usrvar5
+            #0x338, 1,	# SHADOW_FLAG: 0=do crash detection???
+            0x33a: 0,	# rbias: eye to object distance in meters II.FF
+            0x33b: 0,	# rbias_1: eye to object distance in meters IIII
+            0x340: 255,	# ground_texture
+            0x342: 255,	# building_texture
+            0x344: 255,	# aircraft_texture
+            0x346: 5,	# image_complex: complexity of the scenery 0-5
+            0x37e: 1,	# xv: rotated X-axis eye to object distance
+            0x382: 67,	# yv: rotated Y-axis eye to object distance - must be >66 for UK2000
+            0x386: 1,	# zv: rotated Z-axis eye to object distance
+            0x389: 12,	# zulu hours in the day - Midday
+            0x390: 0,	# water_texture
+            0xc72: 5,	# ground wind velocity [kts?]
+            0xc74: 0,	# ground wind direction [units?]
+            0xc76: 0,	# ground wind turbulence [units?]
+        }
+        self.setseason()
+
+        self.cmds={
+            0x00: self.EndA,
+            0x02: self.NOP,
+            0x03: self.Case,
+            0x05: self.Surface,
+            0x06: self.SPnt,
+            0x07: self.CPnt,
+            0x08: self.Closure,
+            0x0d: self.Jump,
+            0x0e: self.DefRes,
+            0x0f: self.StrRes,
+            0x10: self.CntRes,
+            0x14: self.SColor,
+            0x17: self.TextureEnable,
+            0x18: self.Texture,
+            0x1a: self.ResList,
+            0x1b: self.Jump,
+            0x1c: self.IfIn2,
+            0x1d: self.FaceT,
+            0x1e: self.Haze,
+            0x1f: self.TaxiMarkings,
+            0x20: self.FaceTTMap,
+            0x21: self.IfIn3,
+            0x22: self.Return,
+            0x23: self.Call,
+            0x24: self.IfIn1,
+            0x25: self.SeparationPlane,
+            0x26: self.SetWrd,
+            0x29: self.GResList,
+            0x2a: self.FaceT,
+            0x2b: self.Call32,
+            0x2d: self.SColor24,
+            0x2e: self.LColor24,
+            0x2f: self.Scale,
+            0x30: self.NOPh,
+            0x32: self.Call,
+            0x33: self.Instance,
+            0x34: self.SuperScale,
+            0x35: self.PntRow,
+            0x37: self.Point,
+            0x38: self.Concave,
+            0x39: self.IfMsk,
+            0x3b: self.VInstance,
+            0x3c: self.Position,
+            0x3e: self.FaceT,
+            0x40: self.ShadowVPosition,
+            0x42: self.TextureRunway,
+            0x43: self.Texture2,
+            0x44: self.TextureRunway,
+            0x4c: self.VScale,
+            0x4d: self.MoveL2G,
+            0x4e: self.MoveL2G,
+            0x46: self.PointVICall,
+            0x49: self.Building,
+            0x3f: self.NOPh,
+            0x50: self.SColor,
+            0x51: self.LColor,
+            0x52: self.SColor,
+            0x55: self.SurfaceType,
+            0x5d: self.TextureRepeat,
+            0x5f: self.IfSizeV,
+            0x62: self.IfVis,
+            0x63: self.LibraryCall,
+            0x69: self.RoadStart,
+            0x6a: self.RoadCont,
+            0x6b: self.RiverStart,
+            0x6c: self.RiverCont,
+            0x6d: self.IfSizeV,
+            0x6e: self.TaxiwayStart,
+            0x6f: self.RoadCont,
+            0x70: self.AreaSense,
+            0x73: self.Jump,
+            0x74: self.AddCat,
+            0x75: self.Call,
+            0x76: self.NOP,
+            0x77: self.ScaleAGL,
+            0x7a: self.FaceTTMap,
+            0x7d: self.NOP,
+            0x80: self.ResPnt,
+            0x81: self.NOPh,
+            0x83: self.ReScale,
+            0x88: self.Jump32,
+            0x89: self.NOPi,
+            0x8a: self.Call32,
+            0x8b: self.AddCat32,
+            0x8f: self.NOPi,
+            0x93: self.NOPh,
+            0x95: self.CrashIndirect,
+            0x96: self.CrashStart,
+            0x9e: self.Interpolate,
+            0x9f: self.NOPi,
+            0xa0: self.Object,
+            0xa4: self.NOPh,
+            0xa6: self.TargetIndicator,
+            0xa7: self.SpriteVICall,
+            0xa8: self.TextureRoadStart,
+            0xaa: self.NewRunway,
+            0xad: self.Animate,
+            0xae: self.TransformEnd,
+            0xac: self.ZBias,
+            0xaf: self.TransformMatrix,
+            0xb1: self.Tag,
+            0xb2: self.Light,
+            0xb3: self.IfInF1,
+            0xb4: self.NOPi,
+            0xb5: self.VertexList,
+            0xb6: self.MaterialList,
+            0xb7: self.TextureList,
+            0xb8: self.SetMaterial,
+            0xb9: self.DrawTriList,
+            0xba: self.DrawLineList,
+            0xbc: self.NOPi,
+            0xbd: self.NOP,
+            0xc4: self.SetMatrixIndirect,
+        }
+
+    def parse(self, bgl, enda, scen=None, tran=None):
+        self.bgl = bgl
+        self.enda = enda
 
         self.start=bgl.tell()
-        if tran: self.tran=self.start+tran	# Location of TRAN table
+        if tran:
+            # Location of TRAN table
+            self.tran = self.start + tran
         if scen:
             # Decode SCEN table
             bgl.seek(self.start+scen)
@@ -274,193 +478,6 @@ class ProcScen:
                         m.append([a,b,c,d])
                     self.log.debug("%s = %d\n" % (Matrix(m), i))
             bgl.seek(self.start)
-        
-        # State
-        self.complexity=1
-        self.loc=None
-        self.alt=0
-        self.altmsl=0
-        self.layer=None
-        self.matrix=[None]
-        self.scale=1.0		# don't know what to do with scale value in FS8 libs
-        self.basescale=self.scale
-        self.stack=[]		# (return address, layer, billboard, pop matrix?)
-        self.tex=[]
-        self.mat=[]
-        self.vtx=[None] * 2048	# DefRes/ResList limit
-        self.idx=[]		# Indices into vtx
-        self.m=None		# Index into mat
-        self.t=None		# Index into tex
-        self.lightcol=(1,1,1)
-        self.billboard=None	# Emulating billboarding
-
-        self.nodes=[]
-        self.links=[]
-        self.linktype=None	# Last road/river/taxiway (type, width, centerline)
-        self.haze=0		# Whether palette-based transparency. 0=none
-        self.zbias=0		# Polygon offsetting
-        self.surface=False	# StrRes/CntRes does lines not surface by default
-        self.concave=False
-        
-        self.objdat={}		# (mat, vtx[], idx[]) by (name, loc, layer, alt, altmsl, matrix, scale, Texture)
-        self.lightdat={}	# ((x,y,z), (r,g,b)) by (name, loc, layer, alt, altmsl, matrix, scale, None)
-        self.effectdat={}	# ((x,y,z), (effect, s)) by (name, loc, layer, alt, altmsl, matrix, scale, None)
-        self.keys=[]		# ordered list of keys for indexing the above
-        self.polydat=[]		# ((points, layer, heading, scale, Texture))
-
-        self.neednight=False
-        self.dayloc=None
-        self.dayobjdat={}        
-        self.daylightdat={}        
-        self.dayeffectdat={}
-        self.daypolydat=[]
-
-        self.vars={
-            # Vars not listed are assumed to be 0
-            0: 0,	# dummy
-            0x02: 2,	# No idea, but used by Aerosoft to control lighting
-            0x10: 50,	# No idea, but used by Aerosoft to control lighting
-            0x5c: 255,	# Local variable used by Aerosoft in EDDF
-            #0x07e: 0,	# FS5_CG_TO_GROUND_X: ???
-            0x280: 0,	# altmsl (presumably of airplane?)
-            0x282: 1,	# beacon: rotating bitmap shifted 1 bit/3 sec
-            0x28c: 1,	# tod: 2|4 indicates night?
-            0x30A: 6,	# beacon_2: 16-bit bitmap with 0x0506 add/3 sec
-            0x30C: 8,	# beacon_3: 16-bit bitmap with 0x0708 add/3 sec 
-            0x30E: 0xa,	# beacon_4: 16-bit bitmap with 0x090A add/3 sec 
-            0x310: 0xc,	# beacon_5: 16-bit bitmap with 0x0B0C add/3 sec
-            #0x312-31a	# usrvar-usrvar5
-            #0x338, 1,	# SHADOW_FLAG: 0=do crash detection???
-            0x33a: 0,	# rbias: eye to object distance in meters II.FF
-            0x33b: 0,	# rbias_1: eye to object distance in meters IIII
-            0x340: 255,	# ground_texture
-            0x342: 255,	# building_texture
-            0x344: 255,	# aircraft_texture
-            0x346: 5,	# image_complex: complexity of the scenery 0-5
-            0x37e: 1,	# xv: rotated X-axis eye to object distance
-            0x382: 67,	# yv: rotated Y-axis eye to object distance - must be >66 for UK2000
-            0x386: 1,	# zv: rotated Z-axis eye to object distance
-            0x389: 12,	# zulu hours in the day - Midday
-            0x390: 0,	# water_texture
-            0xc72: 5,	# ground wind velocity [kts?]
-            0xc74: 0,	# ground wind direction [units?]
-            0xc76: 0,	# ground wind turbulence [units?]
-            }
-        self.setseason()
-
-        cmds={0x02:self.NOP,
-              0x03:self.Case,
-              0x05:self.Surface,
-              0x06:self.SPnt,
-              0x07:self.CPnt,
-              0x08:self.Closure,
-              0x0d:self.Jump,
-              0x0e:self.DefRes,
-              0x0f:self.StrRes,
-              0x10:self.CntRes,    
-              0x14:self.SColor,
-              0x17:self.TextureEnable,
-              0x18:self.Texture,
-              0x1a:self.ResList,
-              0x1b:self.Jump,
-              0x1c:self.IfIn2,
-              0x1d:self.FaceT,
-              0x1e:self.Haze,
-              0x1f:self.TaxiMarkings,
-              0x20:self.FaceTTMap,
-              0x21:self.IfIn3,
-              0x22:self.Return,
-              0x23:self.Call,
-              0x24:self.IfIn1,
-              0x25:self.SeparationPlane,
-              0x26:self.SetWrd,
-              0x29:self.GResList,
-              0x2a:self.FaceT,
-              0x2b:self.Call32,
-              0x2d:self.SColor24,
-              0x2e:self.LColor24,
-              0x2f:self.Scale,
-              0x30:self.NOPh,
-              0x32:self.Call,
-              0x33:self.Instance,
-              0x34:self.SuperScale,
-              0x35:self.PntRow,
-              0x37:self.Point,
-              0x38:self.Concave,
-              0x39:self.IfMsk,
-              0x3b:self.VInstance,
-              0x3c:self.Position,
-              0x3e:self.FaceT,
-              0x40:self.ShadowVPosition,
-              0x42:self.TextureRunway,
-              0x43:self.Texture2,
-              0x44:self.TextureRunway,
-              0x4c:self.VScale,
-              0x4d:self.MoveL2G,
-              0x4e:self.MoveL2G,
-              0x46:self.PointVICall,
-              0x49:self.Building,
-              0x3f:self.NOPh,
-              0x50:self.SColor,
-              0x51:self.LColor,
-              0x52:self.SColor,
-              0x55:self.SurfaceType,
-              0x5d:self.TextureRepeat,
-              0x5f:self.IfSizeV,
-              0x62:self.IfVis,
-              0x63:self.LibraryCall,
-              0x69:self.RoadStart,
-              0x6a:self.RoadCont,
-              0x6b:self.RiverStart,
-              0x6c:self.RiverCont,
-              0x6d:self.IfSizeV,
-              0x6e:self.TaxiwayStart,
-              0x6f:self.RoadCont,
-              0x70:self.AreaSense,
-              0x73:self.Jump,
-              0x74:self.AddCat,
-              0x75:self.Call,
-              0x76:self.NOP,
-              0x77:self.ScaleAGL,
-              0x7a:self.FaceTTMap,
-              0x7d:self.NOP,
-              0x80:self.ResPnt,
-              0x81:self.NOPh,
-              0x83:self.ReScale,
-              0x88:self.Jump32,
-              0x89:self.NOPi,
-              0x8a:self.Call32,
-              0x8b:self.AddCat32,
-              0x8f:self.NOPi,
-              0x93:self.NOPh,
-              0x95:self.CrashIndirect,
-              0x96:self.CrashStart,
-              0x9e:self.Interpolate,
-              0x9f:self.NOPi,
-              0xa0:self.Object,
-              0xa4:self.NOPh,
-              0xa6:self.TargetIndicator,
-              0xa7:self.SpriteVICall,
-              0xa8:self.TextureRoadStart,
-              0xaa:self.NewRunway,
-              0xad:self.Animate,
-              0xae:self.TransformEnd,
-              0xac:self.ZBias,
-              0xaf:self.TransformMatrix,
-              0xb1:self.Tag,
-              0xb2:self.Light,
-              0xb3:self.IfInF1,
-              0xb4:self.NOPi,
-              0xb5:self.VertexList,
-              0xb6:self.MaterialList,
-              0xb7:self.TextureList,
-              0xb8:self.SetMaterial,
-              0xb9:self.DrawTriList,
-              0xba:self.DrawLineList,
-              0xbc:self.NOPi,
-              0xbd:self.NOP,
-              0xc4:self.SetMatrixIndirect,
-              }
 
         while True:
             pos=bgl.tell()
@@ -482,15 +499,17 @@ class ProcScen:
                     continue
                 self.makeobjs()
                 if self.log.debug_enabled:
-                    self.log.debug("%x: cmd %02x\n" % (pos, self.cmd))
+                    self.log.debug("%x: cmd %02x %s\n"
+                                   % (pos, self.cmd,
+                                      self.cmds[self.cmd].__name__))
                     for i in range(1, len(self.matrix)):
                         self.log.debug("!Unbalanced matrix:\n%s\n"
                                        % self.matrix[i])
                 return
-            elif self.cmd in cmds:
+            elif self.cmd in self.cmds:
                 self.log.debug("%x: cmd %02x %s\n"
-                               % (pos, self.cmd, cmds[self.cmd].__name__))
-                cmds[self.cmd]()
+                               % (pos, self.cmd, self.cmds[self.cmd].__name__))
+                self.cmds[self.cmd]()
             elif self.donight():
                 bgl.seek(self.start)
                 continue
@@ -500,6 +519,8 @@ class ProcScen:
                                      % (self.cmd, pos))
                 raise struct.error
 
+        self.bgl = None
+        self.enda = None
 
     def donight(self):
         if self.neednight and self.vars[0x28c]==1:
@@ -516,7 +537,7 @@ class ProcScen:
             #self.keys=[]	# Don't reset keys - needed to catch day-only objs
             self.polydat=[]
             self.complexity=1
-            self.loc=None
+            self.loc = None
             self.alt=0
             self.altmsl=0
             self.layer=None
@@ -569,6 +590,9 @@ class ProcScen:
         else:
             self.name="%s@%X" % (asciify(splitext(basename(self.srcfile))[0]), self.bgl.tell()-2)
         self.firstarea=False
+
+    def EndA(self):
+        pass
 
     def Case(self):
         (num_cases, var, off_default) = unpack('<3h', self.bgl.read(6))
@@ -633,7 +657,7 @@ class ProcScen:
             self.keys.append(key)
         self.objdat[key].append((mat, vtx, idx))
         self.checkmsl()
-        
+
     def Jump(self):		# 0d, 1b: IfInBoxRawPlane, 73: IfInBoxP
         (off,)=unpack('<h', self.bgl.read(2))
         if not off: raise struct.error	# infloop
@@ -650,12 +674,12 @@ class ProcScen:
     def CntRes(self):		# 10
         (i,)=unpack('<H',self.bgl.read(2))
         self.idx.append(i)	# wait for closure
-        
+
     def SColor(self):	# 14:Scolor, 50:GColor, 52:NewSColor
         (c,)=unpack('H', self.bgl.read(2))
         self.mat=[Material(self.output.xpver, self.unicol(c))]
         self.m=0
-        
+
     def TextureEnable(self):	# 17
         (c,)=unpack('<H', self.bgl.read(2))
         if not c: self.t=None
@@ -673,7 +697,7 @@ class ProcScen:
         self.log.debug("%s\n" % self.tex[0])
         if x or y:
             self.log.debug("!Tex offsets %d,%d\n" % (x, y))
-        
+
     def ResList(self):		# 1a
         (index,count)=unpack('<2H', self.bgl.read(4))
         for i in range(index,index+count):
@@ -684,7 +708,7 @@ class ProcScen:
         (off,)=unpack('<h', self.bgl.read(2))
         if not off: raise struct.error	# infloop
         self.bgl.seek(off-4,1)
-        
+
     def IfIn2(self):		# 1c
         var=[0,0]
         mins=[0,0]
@@ -703,13 +727,13 @@ class ProcScen:
 
     def Haze(self):		# 1e:Haze
         (self.haze,)=unpack('<H', self.bgl.read(2))
-        
+
     def TaxiMarkings(self):	# 1f
         # ignored - info should now be in FS2004-style BGL
         self.rrt=True
         (size,)=unpack('<H', self.bgl.read(2))
         self.bgl.seek(size-4,1)
-        
+
     def FaceTTMap(self):	# 20:FaceTTMap, 7a:GFaceTTMap
         (count,fnx,fny,fnz,)=unpack('<H3h', self.bgl.read(8))
         if count<=4: self.concave=False	# Don't bother
@@ -756,7 +780,7 @@ class ProcScen:
             self.keys.append(key)
         self.objdat[key].append((mat, vtx, idx))
         self.checkmsl()
-        
+
     def IfIn3(self):		# 21
         var=[0,0,0]
         mins=[0,0,0]
@@ -869,7 +893,7 @@ class ProcScen:
             self.keys.append(key)
         self.objdat[key].append((mat, vtx, idx))
         self.checkmsl()
-        
+
     def SColor24(self):		# 2d: SColor24
         (r,a,g,b)=unpack('4B', self.bgl.read(4))
         if a==0xf0:	# unicol
@@ -883,7 +907,7 @@ class ProcScen:
         else:
             self.mat=[Material(self.output.xpver, (r/255.0,g/255.0,b/255.0))]
             self.m=0
-        
+
     def LColor24(self):		# 2e: SColor24
         (r,a,g,b)=unpack('4B', self.bgl.read(4))
         if a==0xf0:	# unicol
@@ -904,13 +928,13 @@ class ProcScen:
         self.alt=0
         self.log.debug("AltMSL %.3f\n" % self.altmsl)
         if -90 <= lat <= 90 and -180 <= lon <= 180:
-            self.loc=Point(lat,lon)
+            self.loc = Point(lat,lon)
             if lat<0 and not self.output.hemi:
                 self.output.hemi=1
                 self.setseason()
         else:	# bogus
             self.log.debug("!Bogus Location %s\n" % Point(lat,lon))
-            self.loc=None
+            self.loc = None
 
     def Instance(self):		# 33
         (off,p,b,h)=unpack('<h3H', self.bgl.read(8))
@@ -940,7 +964,7 @@ class ProcScen:
             self.scale=65536.0/self.getvar(scale)
         else:
             self.scale=1.0/pow(2,16-scale)
-        
+
     def PntRow(self):		# 35
         (sx,sy,sz,ex,ey,ez,count)=unpack('<6hH', self.bgl.read(14))
         if count>1:
@@ -956,7 +980,7 @@ class ProcScen:
         for i in range(count):
             self.lightdat[key].append(((sx+i*dx,sy+i*dy,sz+i*dz), self.lightcol))
         self.checkmsl()
-        
+
     def Point(self):		# 37
         (x,y,z)=unpack('<3h', self.bgl.read(6))
         (key,mat)=self.makekey(False)
@@ -1018,18 +1042,18 @@ class ProcScen:
                     self.log.debug("New\n%s\n" % self.matrix[-1])
                     self.log.debug("Now\n%s\n" % Matrix().offset(x,0,z))
             else:
-                self.loc=pt
+                self.loc = pt
         self.log.debug("!Bogus Location %s\n" % Point(lat,lon))
         self.checkmsl()
 
     def ShadowVPosition(self):	# 40
         self.bgl.read(10)	# ignore
-        
+
     def TextureRunway(self):	# 42: PolygonRunway, 44:TextureRunway
         # ignored - info should now be in FS2004-style BGL
         #self.old=True
         #self.bgl.seek(62,1)	# SDK lies
-        
+
         # runways should now be in FS2004-style BGL. But this command is
         # sometimes used to put back lights on an excluded runway
         (lat,lon,alt)=self.LLA()
@@ -1132,7 +1156,7 @@ class ProcScen:
         self.tex=[tex and Texture(self.output.xpver, tex, lit) or None]
         self.t=0
         self.log.debug("%s\n" % self.tex[0])
-        
+
     def PointVICall(self):	# 46
         (off,x,y,z,p,vp,b,vb,h,vh)=unpack('<4h6H', self.bgl.read(20))
         if not off: raise struct.error	# infloop
@@ -1199,26 +1223,26 @@ class ProcScen:
         if self.matrix[-1]:
             heading=self.matrix[-1].heading()	# not really
             # handle translation
-            loc=self.loc.biased(self.matrix[-1].m[3][0]*self.scale,
-                                -self.matrix[-1].m[3][2]*self.scale)
+            loc = self.loc.biased(self.matrix[-1].m[3][0]*self.scale,
+                                  -self.matrix[-1].m[3][2]*self.scale)
         else:
             heading=0
-            loc=self.loc
+            loc = self.loc
         self.output.objplc.append((loc, heading, self.complexity, name, 1))
-            
+
     def VScale(self):		# 4c
         # ignore and hope another command sets location
         self.bgl.read(8)	# jump,range (LOD) (may be 0),size,reserved
         (scale,var)=unpack('<Ih', self.bgl.read(6))
         self.scale=65536.0/scale
-        self.loc=None
+        self.loc = None
 
     def MoveL2G(self):		# 4d:MoveL2G, 4e:MoveG2L
         (to, fr)=unpack('<2H', self.bgl.read(4))
         val=self.getvar(fr)
         self.vars[to]=val
         self.log.debug("%x<-%x = %d\n" % (to, fr, val))
-        
+
     def LColor(self):		# 51
         (c,)=unpack('H', self.bgl.read(2))
         self.lightcol=self.unicol(c)
@@ -1241,7 +1265,7 @@ class ProcScen:
         self.t=0
         if (x or y):
             self.log.debug("!Tex offsets %d,%d\n" % (x, y))
-        
+
     def IfSizeV(self):		# 5f:IfSizeV, 6d:IfSizeH
         # Go for max detail and let X-Plane remove based on it's own heuristics
         (off, a, b)=unpack('<3h', self.bgl.read(6))
@@ -1261,11 +1285,15 @@ class ProcScen:
         else:
             friendly=name
         if self.matrix[-1]:
-            heading=self.matrix[-1].heading()	# not really
-            scale=self.matrix[-1].scale()*self.scale
+            # not really
+            heading = self.matrix[-1].heading()
+            scale = self.matrix[-1].scale() * self.scale
             # handle translation
-            loc=self.loc.biased(self.matrix[-1].m[3][0]*scale,
-                                -self.matrix[-1].m[3][2]*scale)
+            if self.loc:
+                loc = self.loc.biased(self.matrix[-1].m[3][0]*scale,
+                                      -self.matrix[-1].m[3][2]*scale)
+            else:
+                self.log.info("Expected location but none found!")
         else:
             heading=0
             scale=self.scale
@@ -1331,7 +1359,7 @@ class ProcScen:
     def RiverStart(self):	# 6b
         # ignored
         self.bgl.seek(8,1)
-        
+
     def RiverCont(self):	# 6c
         # ignored
         self.bgl.seek(6,1)
@@ -1372,7 +1400,7 @@ class ProcScen:
         else:
             self.log.debug("!Bogus Location %s\n" % Point(lat, lon))
             self.loc=None
-        
+
     def ResPnt(self):		# 80
         (idx,)=unpack('<H', self.bgl.read(2))
         (x,y,z,c,c,c,c,c)=self.vtx[idx]
@@ -1382,7 +1410,7 @@ class ProcScen:
             self.keys.append(key)
         self.lightdat[key].append(((x,y,z), self.lightcol))
         self.checkmsl()
-        
+
     def Call32(self):		# 2b:AddObj32, 8a:Call32
         (off,)=unpack('<i', self.bgl.read(4))
         if not off: raise struct.error	# infloop
@@ -1417,7 +1445,7 @@ class ProcScen:
         (off,)=unpack('<h', self.bgl.read(2))
         if not off: raise struct.error	# infloop
         self.bgl.seek(off-4,1)
-        
+
     def Interpolate(self):	# 9e
         # Ignored
         self.log.debug("!Interpolate\n")
@@ -1618,7 +1646,7 @@ class ProcScen:
             return
         if not (-1<=width<=1):
             self.nodes.append(TaxiwayPoint(self.loc.biased(x*self.scale, z*self.scale)))
-        
+
     def NewRunway(self):	# aa
         # runways should now be in FS2004-style BGL. But this command is
         # sometimes used to put back lights on an excluded runway
@@ -1675,7 +1703,7 @@ class ProcScen:
         elif markers&0x30:	# ident or dashes
             markings=[1,1]
         else:
-            markings=[0,0]            
+            markings=[0,0]
         if markers&0x0800: markings[1]=0	# single end - no markings
         #if markers&0x1000: markings[0]=7	# not supported in 8.50
         if markers&0x1000: markings[0]=0	# base  closed - no markings
@@ -1753,7 +1781,7 @@ class ProcScen:
 
     def TransformEnd(self):	# ae
         self.matrix.pop()
-        
+
     def TransformMatrix(self):	# af
         (x,y,z)=unpack('<3f', self.bgl.read(12))
         (q00,q01,q02, q10,q11,q12, q20,q21,q22)=unpack('<9f',self.bgl.read(36))
@@ -1772,7 +1800,7 @@ class ProcScen:
 
     def Tag(self):	# b1
         self.bgl.read(20).rstrip(' \0')	# what's this for?
-        
+
     def Light(self):		# b2
         (typ,x,y,z,intens,i,i,b,g,r,a,i,i,i)=unpack('<HfffIffBBBBfff', self.bgl.read(42))
         # Typical intensities are 20 and 40 - so say 40=max
@@ -1786,7 +1814,7 @@ class ProcScen:
             self.keys.append(key)
         self.lightdat[key].append(((x,y,z), (r*intens,g*intens,b*intens)))
         self.checkmsl()
-        
+
     def IfInF1(self):		# b3
         (off, var, vmin, vmax)=unpack('<2h2f', self.bgl.read(12))
         if vmin>vmax:	# Sigh. Seen in TFFR
@@ -1856,15 +1884,16 @@ class ProcScen:
         self.log.debug("%s: %s\t%s: %s\n"
                        % (self.m, self.m is not None and self.mat[self.m],
                           self.t, self.t is not None and self.tex[self.t]))
-        
+
     def DrawTriList(self):	# b9
         idx=[]
         (vbase,vcount,icount)=unpack('<3H', self.bgl.read(6))
         self.log.debug("%d, %d, %d\n" % (vbase, vcount, icount))
-        vtx=self.vtx[vbase:vbase+vcount]
+        vtx = self.vtx[vbase:vbase + vcount]
         idx=unpack('<%dH' % icount, self.bgl.read(2*icount))
         (key,mat)=self.makekey()
-        if not key in self.objdat and self.makepoly(True, vtx, idx):	# don't generate poly if there's already geometry here
+        if not key in self.objdat and self.makepoly(True, vtx, idx):
+            # don't generate poly if there's already geometry here
             return
         maxy=-maxint
         for (x,y,z,nx,ny,nz,tu,tv) in vtx:
@@ -1881,7 +1910,7 @@ class ProcScen:
         (base,vcount,icount)=unpack('<3H', self.bgl.read(6))
         self.old=True
         self.bgl.seek(2*icount,1)
-        
+
     # opcodes c0 and above new in FS2004
 
     def SetMatrixIndirect(self):	# c4
@@ -1916,7 +1945,7 @@ class ProcScen:
 
 
     # Ignored opcodes
-    
+
     def NOP(self):
         # 02:NOOP, 76:BGL, 7d:Perspective, bd:EndVersion
         pass
@@ -1947,7 +1976,7 @@ class ProcScen:
             lon=-(~hi+(~lo+1)/65536.0)
         lon=lon*360.0/0x100000000
         if lon>180: lon-=360
-        
+
         (lo,hi)=unpack('<Hi',self.bgl.read(6))
         if hi>=0:
             alt=hi+lo/65536.0
@@ -2286,7 +2315,7 @@ class ProcScen:
                         self.keys.append(key)
                     self.objdat[key].extend(nightobjdat[nkey])
                     continue
-        
+
         if not self.lightdat and not self.effectdat and not self.objdat and not self.polydat and not self.links:
             return	# Only contained non-scenery stuff
         elif self.libname:
@@ -2344,7 +2373,7 @@ class ProcScen:
                             self.output.polydat[fname].layer=min(poly.layer,self.output.polydat[fname].layer)
                         break	# matched - re-use this object
                     i+=1
-                    
+
             self.output.polydat[fname]=poly
             self.output.polyplc.append((fname, heading, points))
 
@@ -2364,7 +2393,7 @@ class ProcScen:
                               matrix))
             newmatrix=matrix
             heading=0
-            
+
             if loc and matrix and matrix.m[1][1]==1:	# No pitch or bank?
                 # Rotate at placement time in hope of commonality with Objects produced in other Areas
                 heading=matrix.heading()
@@ -2401,7 +2430,7 @@ class ProcScen:
                     if newmatrix:
                         (x,y,z)=newmatrix.transform(x,y,z)
                     obj.vlight.append((x*scale,alt+y*scale,-z*scale, r,g,b))
-                
+
             if lkey in self.effectdat:
                 for ((x,y,z),(effect,s)) in self.effectdat[lkey]:
                     if newmatrix:
@@ -2435,7 +2464,7 @@ class ProcScen:
                                 # replace materials with palette texture
                                 (tu,tv)=rgb2uv(mat.d)
                             newvt.append([x*scale,alt+y*scale,-z*scale, nx,ny,-nz, tu,tv])
-                        
+
                     # Reverse order of individual tris
                     newidx=[]
                     for j in range(0,len(idx),3):
@@ -2735,7 +2764,7 @@ def subdivide(vtx):
     except:
         gluDeleteTess(tessObj)
         raise GLUerror
-    gluDeleteTess(tessObj)        
+    gluDeleteTess(tessObj)
     return points,idx
 
 def tessedge(flag):
@@ -2766,7 +2795,7 @@ def maketexdict(texdir):
         aname=asciify(name).lower()
         if aname not in d:
             d[aname]=name
-    
+
     return texdir, d
 
 
@@ -2780,7 +2809,7 @@ def findtex(name, thistexdir, addtexdir, dropmissing=True):
         for ext in [e, '.dds', '.bmp', '.r8']:
             if s+ext in d:
                 return join(texdir, d[s+ext])
-            
+
         if len(s)==8 and s[-2]=='~' and s[-1].isdigit():
             # Crappy 8.3 name - pick first match
             s=s[:-2]

@@ -2,6 +2,7 @@ from chunk import Chunk
 from os.path import basename
 from struct import unpack
 
+from convbgl import ProcScen as ProcBgl
 from convbgl import findtex
 from convutil import asciify, rgb2uv, Matrix, Object, Material, Texture
 
@@ -12,15 +13,26 @@ class Riff(Chunk, object):
                                    inclheader=False)
 
 
-class ProcMdlx(object):
+class ProcMdl(object):
+    def __init__(self, output):
+        self.log = output.log
+
+    def skip_chunk(self, section, chunk):
+        if len(chunk.getname()):
+            self.log.debug("Skipping %s chunk %r (%d bytes)..\n"
+                           % (section, chunk.getname(), chunk.getsize()))
+            chunk.skip()
+
+
+class ProcMdlx(ProcMdl, object):
     def __init__(self, mdlx, scale, libname, texdir, output, comment):
+        super(ProcMdlx, self).__init__(output)
         # Old style scenery found and skipped
         self.old = False
         # Old style runways/roads found and skipped
         self.rrt = False
         # Animations found and skipped
         self.anim = False
-        self.log = output.log
 
         # new-style objects are scaled when placed
         assert(scale == 1)
@@ -35,6 +47,7 @@ class ProcMdlx(object):
         self.data = {}
         self.maxlod = 0
 
+        self.log.debug("Parsing MDLX\n")
         mdld_parser = {
             'TEXT': lambda chunk: self.read_text(chunk),
             'MATE': lambda chunk: self.read_mate(chunk, texdir,
@@ -52,12 +65,12 @@ class ProcMdlx(object):
             if mdld.getname() == 'MDLD':
                 while mdld.tell() < mdld.getsize():
                     chunk = Riff(mdld)
-                    skip = lambda chunk: self._skip_chunk('MDLD', chunk)
+                    skip = lambda chunk: self.skip_chunk('MDLD', chunk)
                     parse = mdld_parser.get(chunk.getname(), skip)
                     parse(chunk)
 
             elif len(mdld.getname()):
-                self._skip_chunk('MDLX', mdld)
+                self.skip_chunk('MDLX', mdld)
 
         # objs by texture
         objs = {}
@@ -92,12 +105,6 @@ class ProcMdlx(object):
         # Add objs to library with one name
         if objs:
             output.objdat[libname] = objs.values()
-
-    def _skip_chunk(self, section, chunk):
-        if len(chunk.getname()):
-            self.log.debug("Skipping %s chunk %r (%d bytes)..\n"
-                           % (section, chunk.getname(), chunk.getsize()))
-            chunk.skip()
 
     def read_text(self, chunk):
         self.tex.extend([chunk.read(64).strip('\0').strip()
@@ -271,6 +278,47 @@ class ProcMdlx(object):
                 c.skip()
 
 
+class ProcMdl89(ProcMdl, object):
+    def __init__(self, mdl89, scale, libname, srcfile, texdir, output,
+                 comment):
+        super(ProcMdl89, self).__init__(output)
+        # Old style scenery found and skipped
+        self.old = False
+        # Old style runways/roads found and skipped
+        self.rrt = False
+        # Animations found and skipped
+        self.anim = False
+
+        self.log.debug("Parsing MDL8/9\n")
+        bgl = ProcBgl(scale, libname, srcfile, texdir, output)
+        parse_bgl = lambda chunk: bgl.parse(chunk,
+                                            chunk.getsize() - chunk.tell())
+        exte_parser = {
+            'TEXT': parse_bgl,
+            'MATE': parse_bgl,
+            'VERT': parse_bgl,
+            'BGL ': parse_bgl
+        }
+        while mdl89.tell() < mdl89.getsize():
+            riff = Riff(mdl89)
+            if riff.getname() == 'EXTE':
+                while riff.tell() < riff.getsize():
+                    chunk = Riff(riff)
+                    startp = riff.tell()
+                    skip = lambda chunk: self.skip_chunk('EXTE', chunk)
+                    parse = exte_parser.get(chunk.getname(), skip)
+                    parse(chunk)
+                    endp = riff.tell()
+                    if endp - startp < chunk.getsize():
+                        self.log.debug('Chunk %s ended after %d/%d bytes.\n'
+                                       % (chunk.getname(), endp - startp,
+                                          chunk.getsize()))
+                        chunk.skip()
+
+            elif len(riff.getname()):
+                self.skip_chunk('MDL89', riff)
+
+
 # handle FSX format library MDL file
 def ProcScen(bgl, enda, scale, libname, srcfile, texdir, output):
     comment = ("object %s in file %s"
@@ -282,5 +330,8 @@ def ProcScen(bgl, enda, scale, libname, srcfile, texdir, output):
     typ = riff.read(4)
     if typ == 'MDLX':
         return ProcMdlx(riff, scale, libname, texdir, output, comment)
+    elif typ == 'MDL8' or typ == 'MDL9':
+        return ProcMdl89(riff, scale, libname, srcfile, texdir, output,
+                         comment)
     else:
         raise IOError('Unknown model type %s' % typ)
