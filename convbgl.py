@@ -2449,13 +2449,13 @@ class ProcScen:
                 for ((x,y,z),(r,g,b)) in self.lightdat[lkey]:
                     if newmatrix:
                         (x,y,z)=newmatrix.transform(x,y,z)
-                    obj.vlight.append((x*scale,alt+y*scale,-z*scale, r,g,b))
+                    obj.vlight.append([x*scale, alt + y * scale, -z * scale, r, g, b])
 
             if lkey in self.effectdat:
                 for ((x,y,z),(effect,s)) in self.effectdat[lkey]:
                     if newmatrix:
                         (x,y,z)=newmatrix.transform(x,y,z)
-                    obj.veffect.append((x*scale,alt+y*scale,-z*scale, effect, s))
+                    obj.veffect.append([x * scale, alt + y * scale, -z * scale, effect, s])
 
             if lkey in self.objdat:
                 for (mat, vtx, idx) in self.objdat[lkey]:

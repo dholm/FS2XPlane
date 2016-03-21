@@ -431,13 +431,20 @@ class Object:
         elif not self.vt:	# common case
             start=0
             count=len(idx)
-            self.vt=[(round(x,3), round(y,3), round(z,3), round(nx,3), round(ny,3), round(nz,3), round(tu,3), round(tv,3)) for (x,y,z,nx,ny,nz,tu,tv) in vt]	# round to increase chance of detecting dupes
+            # round to increase chance of detecting dupes
+            self.vt = [[round(x, 3), round(y, 3), round(z, 3), round(nx, 3),
+                        round(ny, 3), round(nz, 3), round(tu, 3), round(tv, 3)]
+                     for (x, y, z, nx, ny, nz, tu, tv) in vt]
             self.idx.extend(idx)
         else:
             base=len(self.vt)
             start=len(self.idx)
             count=len(idx)
-            self.vt.extend([(round(x,3), round(y,3), round(z,3), round(nx,3), round(ny,3), round(nz,3), round(tu,3), round(tv,3)) for (x,y,z,nx,ny,nz,tu,tv) in vt])	# round to increase chance of detecting dupes
+            # round to increase chance of detecting dupes
+            self.vt.extend([[round(x, 3), round(y, 3), round(z, 3),
+                             round(nx, 3), round(ny, 3), round(nz, 3),
+                             round(tu, 3), round(tv, 3)]
+                            for (x, y, z, nx, ny, nz, tu, tv) in vt])
             self.idx.extend([base+i for i in idx])
         if not self.mattri:	# or __debug__:
             self.mattri.append((mat, start, count))
