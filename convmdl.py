@@ -107,7 +107,7 @@ class ProcMdlx(ProcMdl, object):
             output.objdat[libname] = objs.values()
 
     def read_text(self, chunk):
-        self.tex.extend([chunk.read(64).strip('\0').strip()
+        self.tex.extend([chunk.read(64).decode('windows-1250').strip(' \0')
                          for i in range(0, chunk.getsize(), 64)])
 
     def read_mate(self, chunk, texdir, addtexdir, xpver):

@@ -690,7 +690,7 @@ class ProcScen:
     def Texture(self):		# 18
         self.surface=True	# StrRes/CntRes does surface not lines
         (c,x,c,y)=unpack('<4h', self.bgl.read(8))
-        tex=self.bgl.read(14).rstrip(' \0')
+        tex = self.bgl.read(14).rstrip(' \0').decode('windows-1250')
         l=tex.find('.')
         if l!=-1:	# Sometimes formatted as 8.3 with spaces
             tex=tex[:l].rstrip(' \0')+tex[l:]
@@ -1144,13 +1144,17 @@ class ProcScen:
 
     def Texture2(self):		# 43
         self.surface=True	# StrRes/CntRes does surface not lines
-        (size,dummy,flags,dummy,dummy)=unpack('<HHBBI', self.bgl.read(10))
-        tex=self.bgl.read(size-12)
-        # This is often incorrectly implemented - texture name can overrun. So read on up to first non-null.
-        while '\0' not in tex:
+        (size, x, flags) = unpack('<3H', self.bgl.read(6))
+        (r, a, g, b) = unpack('<4B', self.bgl.read(4))
+
+        name = self.bgl.read(size - 12).decode("windows-1250")
+        # This is often incorrectly implemented - texture name can overrun. So
+        # read on up to first non-null.
+        while '\0' not in name:
             # Hope we're not at end of area - cos this will overrun.
-            tex=tex+self.bgl.read(1)
-        tex=findtex(tex.split('\0')[0].rstrip(), self.texdir, self.output.addtexdir)
+            name = name + self.bgl.read(1).decode("windows-1250")
+        name = name.split('\0')[0].rstrip()
+        tex = findtex(name, self.texdir, self.output.addtexdir)
         if tex and flags&128:
             (lit,ext)=splitext(tex)
             lit=findtex(lit+'_lm', self.texdir, self.output.addtexdir)
