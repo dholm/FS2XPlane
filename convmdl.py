@@ -38,6 +38,8 @@ class ProcMdlx(ProcMdl, object):
         # new-style objects are scaled when placed
         assert(scale == 1)
 
+        self.name = None
+        self.guid = None
         self.tex = []
         self.mattex = []
         self.vt = []
@@ -66,16 +68,22 @@ class ProcMdlx(ProcMdl, object):
             'ANIB': lambda chunk: self.read_anib(chunk),
         }
         while mdlx.tell() < mdlx.getsize():
-            mdld = Riff(mdlx)
-            if mdld.getname() == 'MDLD':
-                while mdld.tell() < mdld.getsize():
-                    chunk = Riff(mdld)
+            mdl = Riff(mdlx)
+            if mdl.getname() == 'MDLD':
+                while mdl.tell() < mdl.getsize():
+                    chunk = Riff(mdl)
                     skip = lambda chunk: self.skip_chunk('MDLD', chunk)
                     parse = mdld_parser.get(chunk.getname(), skip)
+                    self.log.debug("MDLD chunk %r (%d bytes)..\n"
+                                   % (chunk.getname(), chunk.getsize()))
                     parse(chunk)
 
-            elif len(mdld.getname()):
-                self.skip_chunk('MDLX', mdld)
+            elif mdl.getname() == 'MDLG':
+                self.read_guid(mdl)
+            elif mdl.getname() == 'MDLN':
+                self.read_name(mdl)
+            elif len(mdl.getname()):
+                self.skip_chunk('MDLX', mdl)
 
         # objs by texture
         objs = {}
@@ -110,6 +118,15 @@ class ProcMdlx(ProcMdl, object):
         # Add objs to library with one name
         if objs:
             output.objdat[libname] = objs.values()
+
+    def read_guid(self, chunk):
+        self.guid = UUID(bytes=chunk.read(chunk.getsize()))
+        self.log.debug('GUID %s\n' % self.guid)
+
+    def read_name(self, chunk):
+        self.name = chunk.read(chunk.getsize()).decode('windows-1250')
+        self.name.strip(' \0')
+        self.log.debug('Name %s\n' % self.name)
 
     def read_text(self, chunk):
         self.tex.extend([chunk.read(64).decode('windows-1250').strip(' \0')
