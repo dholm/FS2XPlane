@@ -281,7 +281,7 @@ class ProcMdlx(ProcMdl, object):
             self.log.debug("%2d: %2d %2d %2d %2d\n"
                            % (i, child, peer, parent, offset / 8))
 
-    def read_lodt_lode_part(self, chunk, lod):
+    def read_part(self, chunk, lod):
         (typ, scene, material, verb, voff, vcount, ioff,
          icount, unk) = unpack('<9I', chunk.read(36))
         assert (typ == 1)
@@ -304,28 +304,24 @@ class ProcMdlx(ProcMdl, object):
                                self.idx[ioff:ioff+icount],
                                finalmatrix))
 
-    def read_lodt_lode(self, chunk):
+    def read_lode(self, chunk):
         ende = chunk.getsize() + chunk.tell()
         (lod,) = unpack('<I', chunk.read(4))
         while chunk.tell() < ende:
             c = Riff(chunk)
             if c.getname() == 'PART':
-                self.read_lodt_lode_part(c, lod)
+                self.read_part(c, lod)
             elif len(c.getname()):
-                self.log.debug("Skipping lodt lode chunk %r (%d bytes)..\n"
-                               % (c.getname(), c.getsize()))
-                c.skip()
+                self.skip_chunk('LODE', c)
 
     def read_lodt(self, chunk):
         endt = chunk.getsize() + chunk.tell()
         while chunk.tell() < endt:
             c = Riff(chunk)
             if c.getname() == 'LODE':
-                self.read_lodt_lode(c)
+                self.read_lode(c)
             elif len(c.getname()):
-                self.log.debug("Skipping lodt chunk %r (%d bytes)..\n"
-                               % (c.getname(), c.getsize()))
-                c.skip()
+                self.skip_chunk('LODT', c)
 
     def read_xank(self, chunk, animation):
         (typ,) = unpack('<B', chunk.read(1))
