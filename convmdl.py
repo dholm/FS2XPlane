@@ -1,6 +1,7 @@
 from chunk import Chunk
 from os.path import basename
 from struct import unpack
+from uuid import UUID
 
 from convbgl import ProcScen as ProcBgl
 from convbgl import findtex
@@ -43,6 +44,8 @@ class ProcMdlx(ProcMdl, object):
         self.idx = []
         self.matrix = []
         self.amap = []
+        self.alnk = []
+        self.alst = {}
         self.scen = []
         self.data = {}
         self.maxlod = 0
@@ -57,8 +60,10 @@ class ProcMdlx(ProcMdl, object):
             'VERB': lambda chunk: self.read_verb(chunk),
             'TRAN': lambda chunk: self.read_tran(chunk),
             'AMAP': lambda chunk: self.read_amap(chunk),
+            'SGAL': lambda chunk: self.read_sgal(chunk),
             'SCEN': lambda chunk: self.read_scen(chunk),
-            'LODT': lambda chunk: self.read_lodt(chunk)
+            'LODT': lambda chunk: self.read_lodt(chunk),
+            'ANIB': lambda chunk: self.read_anib(chunk),
         }
         while mdlx.tell() < mdlx.getsize():
             mdld = Riff(mdlx)
@@ -200,10 +205,14 @@ class ProcMdlx(ProcMdl, object):
     def read_amap(self, chunk):
         for i in range(0, chunk.getsize(), 8):
             (a, b) = unpack('<2I', chunk.read(8))
-            self.amap.append(b)
+            self.amap.append((a, b))
             self.log.debug("Animation map %d\n" % len(self.amap))
             for i in range(len(self.amap)):
-                self.log.debug("%2d: %2d\n" % (i, self.amap[i]))
+                typ = self.amap[i][0]
+                typ = ('static' if typ == 1 else
+                       'animated' if typ == 2 else
+                       str(typ))
+                self.log.debug("%2d: %2d (%s)\n" % (i, self.amap[i][1], typ))
 
     def read_scen(self, chunk):
         # Assumed to be after TRAN and AMAP sections
@@ -226,7 +235,7 @@ class ProcMdlx(ProcMdl, object):
         self.log.debug("Scene Graph %d\n" % len(self.scen))
         for i in range(count):
             (child, peer, offset, parent) = self.scen[i]
-            self.scen[i] = (child, peer, self.matrix[self.amap[offset / 8]],
+            self.scen[i] = (child, peer, self.matrix[self.amap[offset / 8][1]],
                             parent)
             self.log.debug("%2d: %2d %2d %2d %2d\n"
                            % (i, child, peer, parent, offset / 8))
@@ -276,6 +285,93 @@ class ProcMdlx(ProcMdl, object):
                 self.log.debug("Skipping lodt chunk %r (%d bytes)..\n"
                                % (c.getname(), c.getsize()))
                 c.skip()
+
+    def read_xank(self, chunk, animation):
+        (typ,) = unpack('<B', chunk.read(1))
+        (time,) = unpack('<f', chunk.read(4))
+        if typ == 4:
+            # Rotation
+            (q0, q1, q2, q3) = unpack('<4f', chunk.read(16))
+            animation.append((time, q0, q1, q2, q3))
+            self.log.debug('\t\t\t\tXANK rotation (%f, %f, %f, %f) '
+                           '(%d bytes)\n'
+                           % (q0, q1, q2, q3, chunk.getsize()))
+        elif typ == 3:
+            # Translation
+            (x, y, z) = unpack('<3f', chunk.read(12))
+            animation.append((time, x, y, z))
+            self.log.debug('\t\t\t\tXANK translation (%d) (%f, %f, %f) '
+                           '(%d bytes)\n'
+                           % (typ, x, y, z, chunk.getsize()))
+        else:
+            raise IOError('Unsupported XANK type %d!' % typ)
+
+    def read_xans(self, chunk):
+        endv = chunk.getsize() + chunk.tell()
+        (typ, anim_id) = unpack('<2I', chunk.read(8))
+        (length,) = unpack('<f', chunk.read(4))
+
+        self.log.debug('\t\t\tXANS type %d id %d length %f (%d bytes)..\n'
+                       % (typ, anim_id, length, chunk.getsize()))
+        animation = []
+        while chunk.tell() < endv:
+            c = Riff(chunk)
+            if c.getname() == 'XANK':
+                self.read_xank(c, animation)
+            else:
+                self.skip_chunk('XANS', c)
+
+        if anim_id not in self.alst:
+            self.alst[anim_id] = [animation]
+        self.alst[anim_id].append(animation)
+
+    def read_xani(self, chunk):
+        endv = chunk.getsize() + chunk.tell()
+        guid = UUID(bytes=chunk.read(16))
+        (length,) = unpack('<f', chunk.read(4))
+        typ = chunk.read(16).strip(' \0')
+        param = ''
+        while True:
+            c = chunk.read(1)
+            if c == '\0':
+                break
+            param += c
+        self.log.debug('\t\tXANI GUID %s length %f type %s param %s\n'
+                       % (guid, length, typ, param))
+        while chunk.tell() < endv:
+            c = Riff(chunk)
+            if c.getname() == 'XANS':
+                self.read_xans(c)
+            else:
+                self.skip_chunk('XANI', c)
+
+    def read_xanl(self, chunk):
+        endv = chunk.getsize() + chunk.tell()
+        self.log.debug('\tXANL (%d bytes)..\n' % chunk.getsize())
+        while chunk.tell() < endv:
+            c = Riff(chunk)
+            if c.getname() == 'XANI':
+                self.read_xani(c)
+            else:
+                self.skip_chunk('XANL', c)
+
+    def read_anib(self, chunk):
+        riff = Riff(chunk)
+        endv = riff.getsize() + riff.tell()
+        while riff.tell() < endv:
+            c = Riff(riff)
+            if c.getname() == 'XANL':
+                self.read_xanl(c)
+            else:
+                self.skip_chunk('ANIB', c)
+
+        chunk.skip()
+
+    def read_sgal(self, chunk):
+        count = chunk.getsize() / 2
+        for i in range(count):
+            (anim_id,) = unpack('<H', chunk.read(2))
+            self.alnk.append(anim_id)
 
 
 class ProcMdl89(ProcMdl, object):
