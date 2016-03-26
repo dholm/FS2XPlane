@@ -13,6 +13,41 @@ class Riff(Chunk, object):
         super(Riff, self).__init__(fil, align=False, bigendian=False,
                                    inclheader=False)
 
+    def _read_unpack(self, fmt, size, count):
+        d = unpack('<%d%c' % (count, fmt), self.read(size * count))
+        if count == 1:
+            return d[0]
+        return d
+
+    def read_uint8(self, count=1):
+        return self._read_unpack('B', 1, count)
+
+    def read_uint16(self, count=1):
+        return self._read_unpack('H', 2, count)
+
+    def read_int16(self, count=1):
+        return self._read_unpack('h', 2, count)
+
+    def read_uint32(self, count=1):
+        return self._read_unpack('I', 4, count)
+
+    def read_float(self, count=1):
+        return self._read_unpack('f', 4, count)
+
+    def read_string(self, size=-1):
+        s = ''
+        if size == -1:
+            while True:
+                c = self.read(1)
+                if c == '\0':
+                    break
+                s += c
+
+        else:
+            s = self.read(size).decode('windows-1250')
+
+        return s.strip(' \0')
+
 
 class ProcMdl(object):
     def __init__(self, output):
@@ -131,12 +166,11 @@ class ProcMdlx(ProcMdl, object):
         self.log.debug('GUID %s\n' % self.guid)
 
     def read_name(self, chunk):
-        self.name = chunk.read(chunk.getsize()).decode('windows-1250')
-        self.name.strip(' \0')
+        self.name = chunk.read_string(chunk.getsize())
         self.log.debug('Name %s\n' % self.name)
 
     def read_text(self, chunk):
-        self.tex.extend([chunk.read(64).decode('windows-1250').strip(' \0')
+        self.tex.extend([chunk.read_string(64)
                          for i in range(0, chunk.getsize(), 64)])
 
     def read_mate(self, chunk, texdir, addtexdir, xpver):
@@ -205,22 +239,21 @@ class ProcMdlx(ProcMdl, object):
                            % (i, self.mattex[i][0], self.mattex[i][1]))
 
     def read_inde(self, chunk):
-        self.idx = unpack('<%dH' % (chunk.getsize() / 2),
-                          chunk.read(chunk.getsize()))
+        self.idx = chunk.read_uint16(chunk.getsize() / 2)
 
     def read_verb(self, chunk):
         endv = chunk.getsize() + chunk.tell()
         while chunk.tell() < endv:
             c = Riff(chunk)
             if c.getname() == 'VERT':
-                self.vt.append([unpack('<8f', c.read(32))
+                self.vt.append([c.read_float(8)
                                 for i in range(0, c.getsize(), 32)])
             elif len(c.getname()):
                 c.skip()
 
     def read_tran(self, chunk):
         for i in range(0, chunk.getsize(), 64):
-            self.matrix.append(Matrix([unpack('<4f', chunk.read(16))
+            self.matrix.append(Matrix([chunk.read_float(4)
                                        for j in range(4)]))
         self.log.debug("Matrices %d\n" % len(self.matrix))
         for i in range(len(self.matrix)):
@@ -228,7 +261,7 @@ class ProcMdlx(ProcMdl, object):
 
     def read_amap(self, chunk):
         for i in range(0, chunk.getsize(), 8):
-            (a, b) = unpack('<2I', chunk.read(8))
+            (a, b) = chunk.read_uint32(2)
             self.amap.append((a, b))
             self.log.debug("Animation map %d\n" % len(self.amap))
             for i in range(len(self.amap)):
@@ -239,28 +272,28 @@ class ProcMdlx(ProcMdl, object):
                 self.log.debug("%2d: %2d (%s)\n" % (i, self.amap[i][1], typ))
 
     def read_bmap(self, chunk):
-        (bmap_idx,) = unpack('<I', chunk.read(4))
+        bmap_idx = chunk.read_uint32()
         for i in range(0, chunk.getsize(), 4):
-            (sgbr_idx,) = unpack('<I', chunk.read(4))
+            sgbr_idx = chunk.read_uint32()
             self.bmap[i] = sgbr_idx
 
     def read_sgbr(self, chunk):
         count = chunk.getsize() / 2
         for _ in range(count):
-            (bone_id,) = unpack('<H', chunk.read(2))
+            bone_id = chunk.read_uint16()
             self.blnk.append(bone_id)
 
     def read_sgjc(self, chunk):
         count = chunk.getsize() / 2
         for _ in range(count):
-            (joint_constraint,) = unpack('<H', chunk.read(2))
+            joint_constraint = chunk.read_uint16()
             self.jcon.append(joint_constraint)
 
     def read_scen(self, chunk):
         # Assumed to be after TRAN and AMAP sections
         count = chunk.getsize() / 8
         for i in range(count):
-            (child, peer, offset, unk) = unpack('<4h', chunk.read(8))
+            (child, peer, offset, unk) = chunk.read_int16(4)
             self.scen.append((child, peer, offset, -1))
         # Invert Child/Peer pointers to get parents
         for i in range(count):
@@ -284,7 +317,7 @@ class ProcMdlx(ProcMdl, object):
 
     def read_part(self, chunk, lod):
         (typ, scene, material, verb, voff, vcount, ioff,
-         icount, unk) = unpack('<9I', chunk.read(36))
+         icount, unk) = chunk.read_uint32(9)
         assert (typ == 1)
         self.maxlod = max(lod, self.maxlod)
         (child, peer, finalmatrix, parent) = self.scen[scene]
@@ -307,7 +340,7 @@ class ProcMdlx(ProcMdl, object):
 
     def read_lode(self, chunk):
         ende = chunk.getsize() + chunk.tell()
-        (lod,) = unpack('<I', chunk.read(4))
+        lod = chunk.read_uint32()
         while chunk.tell() < ende:
             c = Riff(chunk)
             if c.getname() == 'PART':
@@ -325,12 +358,12 @@ class ProcMdlx(ProcMdl, object):
                 self.skip_chunk('LODT', c)
 
     def read_plat(self, chunk):
-        (surface,) = unpack('<I', chunk.read(4))
-        (sgref,) = unpack('<I', chunk.read(4))
-        (count,) = unpack('<I', chunk.read(4))
+        surface = chunk.read_uint32()
+        sgref = chunk.read_uint32()
+        count = chunk.read_uint32()
         vtx = []
         for i in range(count):
-            vtx.append(unpack('<3f', chunk.read(12)))
+            vtx.append(chunk.read_float(3))
 
     def read_plal(self, chunk):
         endv = chunk.getsize() + chunk.tell()
@@ -343,18 +376,18 @@ class ProcMdlx(ProcMdl, object):
                 self.skip_chunk('PLAL', c)
 
     def read_xank(self, chunk, animation):
-        (typ,) = unpack('<B', chunk.read(1))
-        (time,) = unpack('<f', chunk.read(4))
+        typ = chunk.read_uint8()
+        time = chunk.read_float()
         if typ == 4:
             # Rotation
-            (q0, q1, q2, q3) = unpack('<4f', chunk.read(16))
+            (q0, q1, q2, q3) = chunk.read_float(4)
             animation.append((time, q0, q1, q2, q3))
             self.log.debug('\t\t\t\tXANK rotation (%f, %f, %f, %f) '
                            '(%d bytes)\n'
                            % (q0, q1, q2, q3, chunk.getsize()))
         elif typ == 3:
             # Translation
-            (x, y, z) = unpack('<3f', chunk.read(12))
+            (x, y, z) = chunk.read_float(3)
             animation.append((time, x, y, z))
             self.log.debug('\t\t\t\tXANK translation (%d) (%f, %f, %f) '
                            '(%d bytes)\n'
@@ -364,8 +397,8 @@ class ProcMdlx(ProcMdl, object):
 
     def read_xans(self, chunk):
         endv = chunk.getsize() + chunk.tell()
-        (typ, anim_id) = unpack('<2I', chunk.read(8))
-        (length,) = unpack('<f', chunk.read(4))
+        (typ, anim_id) = chunk.read_uint32(2)
+        length = chunk.read_float()
 
         self.log.debug('\t\t\tXANS type %d id %d length %f (%d bytes)..\n'
                        % (typ, anim_id, length, chunk.getsize()))
@@ -384,14 +417,9 @@ class ProcMdlx(ProcMdl, object):
     def read_xani(self, chunk):
         endv = chunk.getsize() + chunk.tell()
         guid = UUID(bytes=chunk.read(16))
-        (length,) = unpack('<f', chunk.read(4))
-        typ = chunk.read(16).strip(' \0')
-        param = ''
-        while True:
-            c = chunk.read(1)
-            if c == '\0':
-                break
-            param += c
+        length = chunk.read_float()
+        typ = chunk.read_string(16)
+        param = chunk.read_string()
         self.log.debug('\t\tXANI GUID %s length %f type %s param %s\n'
                        % (guid, length, typ, param))
         while chunk.tell() < endv:
@@ -426,7 +454,7 @@ class ProcMdlx(ProcMdl, object):
     def read_sgal(self, chunk):
         count = chunk.getsize() / 2
         for i in range(count):
-            (anim_id,) = unpack('<H', chunk.read(2))
+            anim_id = chunk.read_uint16()
             self.alnk.append(anim_id)
 
 
