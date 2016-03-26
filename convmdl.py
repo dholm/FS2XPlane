@@ -50,6 +50,9 @@ class ProcMdlx(ProcMdl, object):
         self.alst = {}
         self.scen = []
         self.data = {}
+        self.bmap = {}
+        self.blnk = []
+        self.jcon = []
         self.maxlod = 0
 
         self.log.debug("Parsing MDLX\n")
@@ -66,6 +69,9 @@ class ProcMdlx(ProcMdl, object):
             'SCEN': lambda chunk: self.read_scen(chunk),
             'LODT': lambda chunk: self.read_lodt(chunk),
             'ANIB': lambda chunk: self.read_anib(chunk),
+            'BMAP': lambda chunk: self.read_bmap(chunk),
+            'SGBR': lambda chunk: self.read_sgbr(chunk),
+            'SGJC': lambda chunk: self.read_sgjc(chunk),
         }
         while mdlx.tell() < mdlx.getsize():
             mdl = Riff(mdlx)
@@ -230,6 +236,24 @@ class ProcMdlx(ProcMdl, object):
                        'animated' if typ == 2 else
                        str(typ))
                 self.log.debug("%2d: %2d (%s)\n" % (i, self.amap[i][1], typ))
+
+    def read_bmap(self, chunk):
+        (bmap_idx,) = unpack('<I', chunk.read(4))
+        for i in range(0, chunk.getsize(), 4):
+            (sgbr_idx,) = unpack('<I', chunk.read(4))
+            self.bmap[i] = sgbr_idx
+
+    def read_sgbr(self, chunk):
+        count = chunk.getsize() / 2
+        for _ in range(count):
+            (bone_id,) = unpack('<H', chunk.read(2))
+            self.blnk.append(bone_id)
+
+    def read_sgjc(self, chunk):
+        count = chunk.getsize() / 2
+        for _ in range(count):
+            (joint_constraint,) = unpack('<H', chunk.read(2))
+            self.jcon.append(joint_constraint)
 
     def read_scen(self, chunk):
         # Assumed to be after TRAN and AMAP sections
