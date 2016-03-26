@@ -68,6 +68,7 @@ class ProcMdlx(ProcMdl, object):
             'SGAL': lambda chunk: self.read_sgal(chunk),
             'SCEN': lambda chunk: self.read_scen(chunk),
             'LODT': lambda chunk: self.read_lodt(chunk),
+            'PLAL': lambda chunk: self.read_plal(chunk),
             'ANIB': lambda chunk: self.read_anib(chunk),
             'BMAP': lambda chunk: self.read_bmap(chunk),
             'SGBR': lambda chunk: self.read_sgbr(chunk),
@@ -322,6 +323,24 @@ class ProcMdlx(ProcMdl, object):
                 self.read_lode(c)
             elif len(c.getname()):
                 self.skip_chunk('LODT', c)
+
+    def read_plat(self, chunk):
+        (surface,) = unpack('<I', chunk.read(4))
+        (sgref,) = unpack('<I', chunk.read(4))
+        (count,) = unpack('<I', chunk.read(4))
+        vtx = []
+        for i in range(count):
+            vtx.append(unpack('<3f', chunk.read(12)))
+
+    def read_plal(self, chunk):
+        endv = chunk.getsize() + chunk.tell()
+        while chunk.tell() < endv:
+            c = Riff(chunk)
+            if c.getname() == 'PLAT':
+                self.read_plat(c)
+
+            elif len(c.getname()):
+                self.skip_chunk('PLAL', c)
 
     def read_xank(self, chunk, animation):
         (typ,) = unpack('<B', chunk.read(1))
